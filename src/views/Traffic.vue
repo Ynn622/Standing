@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onMounted, ref, watch } from 'vue';
 import BottomNav from '@/components/BottomNav.vue';
 import GoogleMap from '@/components/common/GoogleMap.vue';
 import {
+  fetchRoadRiskSegments,
   getTrafficLayerPresets,
   getTrafficMapEmbedUrl,
   getTrafficTabs,
   reverseGeocode
 } from '@/utils/api';
-import type { TrafficTab } from '@/utils/api';
-import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
-
-const router = useRouter();
+import type { SafeRouteSegment, TrafficTab } from '@/utils/api';
+import type { LatLng, MapMarkerDescriptor, MapPolylineDescriptor } from '@/types/maps';
 
 const filters = getTrafficTabs();
 const layerPresets = getTrafficLayerPresets();
@@ -24,11 +22,69 @@ const isLocating = ref(false);
 const locationError = ref<string | null>(null);
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
 
-const selectedFilters = ref<TrafficTab['id'][]>(
-  filters.length ? [filters[0].id] : []
-);
+const selectedFilters = ref<TrafficTab['id'][]>(filters.map((filter) => filter.id));
 
 const detailLayerId = ref<TrafficTab['id'] | null>(null);
+const categoryLevelMap: Record<TrafficTab['id'], number[]> = {
+  safe: [1, 2],
+  avoid: [3, 4],
+  danger: [5]
+};
+
+const categorySegments = ref<Record<TrafficTab['id'], SafeRouteSegment[]>>({
+  safe: [],
+  danger: [],
+  avoid: []
+});
+const isSegmentLoading = ref(false);
+const segmentError = ref<string | null>(null);
+const lastUpdatedLabel = ref('資料更新中…');
+const riskLevelCache = new Map<number, SafeRouteSegment[]>();
+
+const pullRiskSegments = async () => {
+  if (!filters.length) {
+    return;
+  }
+  const levels = Array.from(
+    new Set(filters.flatMap((filter) => categoryLevelMap[filter.id] ?? []))
+  ).sort((a, b) => a - b);
+  if (!levels.length) {
+    return;
+  }
+  isSegmentLoading.value = true;
+  segmentError.value = null;
+  try {
+    await Promise.all(
+      levels.map(async (level) => {
+        if (riskLevelCache.has(level)) {
+          return;
+        }
+        const segments = await fetchRoadRiskSegments(level);
+        riskLevelCache.set(level, segments);
+      })
+    );
+    const snapshot: Record<TrafficTab['id'], SafeRouteSegment[]> = { safe: [], danger: [], avoid: [] };
+    (Object.keys(categoryLevelMap) as TrafficTab['id'][]).forEach((categoryId) => {
+      const categoryLevels = categoryLevelMap[categoryId] ?? [];
+      snapshot[categoryId] = categoryLevels.flatMap((level) => riskLevelCache.get(level) ?? []);
+    });
+    categorySegments.value = snapshot;
+    const latestUpdate = Array.from(riskLevelCache.values())
+      .flat()
+      .filter((segment) => segment?.updatedAt)
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))[0]?.updatedAt;
+    if (latestUpdate) {
+      lastUpdatedLabel.value = `更新：${new Date(latestUpdate).toLocaleString()}`;
+    } else {
+      lastUpdatedLabel.value = '更新時間：資料來源提供中';
+    }
+  } catch (error) {
+    console.warn('[Traffic] 無法取得道路風險資料', error);
+    segmentError.value = '無法載入道路風險資料，請稍後再試。';
+  } finally {
+    isSegmentLoading.value = false;
+  }
+};
 
 const toggleFilter = (filterId: TrafficTab['id']) => {
   const currentIndex = selectedFilters.value.indexOf(filterId);
@@ -49,7 +105,7 @@ watch(selectedFilters, (filters) => {
 const hasSelection = computed(() => selectedFilters.value.length > 0);
 
 const activeLayers = computed(() =>
-  selectedFilters.value.map(id => ({
+  selectedFilters.value.map((id) => ({
     id,
     ...layerPresets[id]
   }))
@@ -80,6 +136,23 @@ const handleLayerClick = (layerId: TrafficTab['id']) => {
 const currentAddress = ref('尚未鎖定地址');
 
 const locationLabel = computed(() => currentAddress.value);
+const categoryCounts = computed<Record<TrafficTab['id'], number>>(() => {
+  const record: Record<TrafficTab['id'], number> = {
+    safe: categorySegments.value.safe.length,
+    danger: categorySegments.value.danger.length,
+    avoid: categorySegments.value.avoid.length
+  };
+  return record;
+});
+
+const categoryLegends = computed(() =>
+  filters.map((filter) => ({
+    ...layerPresets[filter.id],
+    id: filter.id,
+    levels: categoryLevelMap[filter.id],
+    count: categoryCounts.value[filter.id]
+  }))
+);
 
 const requestUserLocation = () => {
   if (!canUseGeolocation || typeof navigator === 'undefined') {
@@ -137,6 +210,76 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
     }
   ];
 });
+
+const trafficPolylines = computed<MapPolylineDescriptor[]>(() => {
+  const polylines: MapPolylineDescriptor[] = [];
+  selectedFilters.value.forEach((categoryId) => {
+    const color = layerPresets[categoryId]?.color ?? '#111827';
+    const weight = categoryId === 'danger' ? 6 : categoryId === 'avoid' ? 5 : 4;
+    const opacity = categoryId === 'safe' ? 0.8 : 0.95;
+    const dashed = categoryId === 'safe';
+    const zIndex = categoryId === 'danger' ? 50 : categoryId === 'avoid' ? 40 : 35;
+    categorySegments.value[categoryId]
+      ?.filter((segment) => segment.start && segment.end)
+      .forEach((segment, index) => {
+        polylines.push({
+          id: `traffic-${categoryId}-${segment.id ?? index}`,
+          path: [segment.start!, segment.end!],
+          color,
+          weight,
+          opacity,
+          zIndex,
+          dashed,
+          dashSpacing: dashed ? '24px' : undefined
+        });
+      });
+  });
+  return polylines;
+});
+
+const totalVisibleSegments = computed(() =>
+  selectedFilters.value.reduce(
+    (sum, categoryId) => sum + (categoryCounts.value[categoryId] ?? 0),
+    0
+  )
+);
+
+const detailSegments = computed(() => {
+  if (!detailLayerId.value) {
+    return [];
+  }
+  return categorySegments.value[detailLayerId.value] ?? [];
+});
+
+const detailSegmentPreview = computed(() => detailSegments.value.slice(0, 4));
+const remainingDetailCount = computed(() =>
+  Math.max(0, detailSegments.value.length - detailSegmentPreview.value.length)
+);
+
+watch(
+  () => trafficPolylines.value,
+  (polylines) => {
+    if (userCoords.value || !polylines.length) {
+      return;
+    }
+    const firstPath = polylines[0].path;
+    if (firstPath?.length) {
+      mapCenter.value = firstPath[0];
+    }
+  },
+  { immediate: true }
+);
+
+onMounted(() => {
+  pullRiskSegments();
+});
+
+const openTrafficMap = () => {
+  if (!mapEmbedUrl) {
+    return;
+  }
+  window.open(mapEmbedUrl, '_blank', 'noopener,noreferrer');
+};
 </script>
 
 <template>
@@ -168,19 +311,44 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
               }"
             @click="toggleFilter(filter.id)"
           >
-            {{ filter.label }}
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>{{ filter.label }}</span>
+              <span>{{ categoryCounts[filter.id] ?? 0 }}</span>
+            </div>
+            <p class="mt-0.5 text-[11px] font-medium opacity-85">
+              Lv.{{ categoryLegends.find((item) => item.id === filter.id)?.levels.join(' / ') }}
+            </p>
           </button>
         </div>
         <p class="mt-2 text-xs text-grey-400">
           可複選路段類型，自訂顯示的地圖圖層
         </p>
+        <div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-grey-500">
+          <span>{{ lastUpdatedLabel }}</span>
+          <button
+            type="button"
+            class="text-primary-500 underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:text-grey-300"
+            :disabled="isSegmentLoading"
+            @click="pullRiskSegments"
+          >
+            {{ isSegmentLoading ? '同步中...' : '重新整理' }}
+          </button>
+          <span v-if="segmentError" class="text-rose-500">{{ segmentError }}</span>
+        </div>
       </section>
 
       <!-- 地圖顯示區 -->
       <section class="flex-1 rounded-3xl border border-grey-100 shadow-lg overflow-hidden">
         <div class="map-embed map-embed--tall h-full min-h-[360px]">
-          <GoogleMap :center="mapCenter" :markers="trafficMapMarkers" :zoom="14" />
-          <div class="map-embed__badge">即時路況</div>
+          <GoogleMap
+            :center="mapCenter"
+            :markers="trafficMapMarkers"
+            :polylines="trafficPolylines"
+            :zoom="14"
+          />
+          <div class="map-embed__badge">
+            即時路況 · {{ totalVisibleSegments }} 筆
+          </div>
           <div class="map-embed__actions">
             <button
               type="button"
@@ -190,6 +358,12 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
             >
               {{ isLocating ? '定位中...' : '重新定位' }}
             </button>
+          </div>
+          <div
+            v-if="isSegmentLoading"
+            class="absolute inset-0 z-40 flex items-center justify-center bg-white/70 text-sm font-semibold text-grey-500 backdrop-blur-[2px]"
+          >
+            載入路段資料中…
           </div>
 
           <!-- 浮動資訊卡 -->
@@ -211,8 +385,25 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
                 {{ detailLayer.description }}
               </p>
               <p class="mt-2 text-xs font-medium text-grey-500">
-                {{ detailLayer.highlight }}
+                {{ detailLayer.highlight }}（Lv.{{ categoryLevelMap[detailLayer.id].join(' / ') }}）
               </p>
+              <ul
+                v-if="detailSegments.length"
+                class="mt-3 space-y-1.5 rounded-xl bg-grey-50/70 p-3 text-xs text-grey-700"
+              >
+                <li
+                  v-for="segment in detailSegmentPreview"
+                  :key="segment.id"
+                  class="flex items-start justify-between gap-2"
+                >
+                  <span class="font-semibold">{{ segment.name || '未命名路段' }}</span>
+                  <span class="text-[11px] text-grey-500">{{ segment.updatedAt || '更新中' }}</span>
+                </li>
+                <li v-if="remainingDetailCount" class="text-[11px] text-grey-500">
+                  還有 {{ remainingDetailCount }} 筆路段可縮放查看
+                </li>
+              </ul>
+              <p v-else-if="!isSegmentLoading" class="mt-3 text-[11px] text-grey-400">此分類暫無路段資料。</p>
               <p class="mt-3 text-[11px] text-grey-400">雙指縮放地圖，點擊標記了解更多。</p>
             </div>
           </Transition>
@@ -232,6 +423,36 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
               {{ layer.title }}
             </button>
           </div>
+
+          <!-- 圖例 -->
+          <div
+            class="absolute right-4 bottom-24 z-30 flex w-48 flex-col gap-2 rounded-2xl bg-white/90 p-3 shadow-lg"
+          >
+            <div
+              v-for="legend in categoryLegends"
+              :key="legend.id"
+              class="border-b border-grey-100 pb-2 last:border-none last:pb-0"
+            >
+              <div class="flex items-center justify-between text-xs font-semibold text-grey-700">
+                <span class="flex items-center gap-2">
+                  <span
+                    class="inline-flex h-2 w-6 rounded-full"
+                    :style="{ backgroundColor: legend.color }"
+                  />
+                  {{ legend.title }}
+                </span>
+                <span>{{ legend.count }}</span>
+              </div>
+              <p class="mt-1 text-[11px] text-grey-500">Lv.{{ legend.levels.join(' / ') }}</p>
+            </div>
+          </div>
+
+          <p
+            v-if="segmentError && !isSegmentLoading"
+            class="absolute inset-x-4 bottom-4 z-30 rounded-xl bg-rose-50/95 px-3 py-2 text-center text-xs font-semibold text-rose-600 shadow"
+          >
+            {{ segmentError }}
+          </p>
         </div>
       </section>
 
