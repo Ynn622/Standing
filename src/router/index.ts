@@ -7,7 +7,7 @@ const routes: RouteRecordRaw[] = [
     name: 'home',
     component: () => import('@/views/Home.vue'),
     meta: {
-      title: '首頁 - 即時風況'
+      title: '首頁'
     }
   },
   {
@@ -24,14 +24,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Wind.vue'),
     meta: {
       title: '風況資訊'
-    }
-  },
-  {
-    path: '/settings',
-    name: 'settings',
-    component: () => import('@/views/Settings.vue'),
-    meta: {
-      title: '偏好設定'
     }
   },
   {
@@ -68,9 +60,9 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   // 設置頁面標題
   if (to.meta.title) {
-    document.title = `${to.meta.title} - 即時風況`;
+    document.title = to.meta.title as string;
   } else {
-    document.title = '即時風況';
+    document.title = '城市通';
   }
 
   next();

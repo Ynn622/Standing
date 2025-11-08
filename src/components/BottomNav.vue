@@ -7,8 +7,7 @@ const route = useRoute();
 const navItems = [
   { name: 'home', label: '首頁', icon: '🏠' },
   { name: 'traffic', label: '即時路況', icon: '🚗' },
-  { name: 'wind', label: '風況資訊', icon: '🌪️' },
-  { name: 'settings', label: '偏好設定', icon: '⚙️' }
+  { name: 'wind', label: '風況資訊', icon: '🌪️' }
 ];
 
 const navigateTo = (name: string) => {
@@ -17,7 +16,7 @@ const navigateTo = (name: string) => {
 </script>
 
 <template>
-  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-grey-200 shadow-lg z-50">
+  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-grey-200 shadow-lg z-50 pb-safe">
     <div class="flex justify-around items-center h-16 md:h-20">
       <button
         v-for="item in navItems"
@@ -39,6 +38,11 @@ const navigateTo = (name: string) => {
 <style scoped>
 button {
   -webkit-tap-highlight-color: transparent;
+}
+
+/* 支援 iOS 安全區域 */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 </style>
 

@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue';
 import BottomNav from '@/components/BottomNav.vue';
 import Select from '@/components/base/Select.vue';
+import Dialog from '@/components/base/Dialog.vue';
 
 interface NewsItem {
   id: number;
@@ -77,20 +78,22 @@ const news = ref<NewsItem[]>([
   }
 ]);
 
+const selectedNews = ref<NewsItem | null>(null);
+const showNewsDialog = ref(false);
+
 const openNewsDetail = (newsItem: NewsItem) => {
-  alert(`新聞詳情：\n${newsItem.title}\n\n${newsItem.summary}`);
+  selectedNews.value = newsItem;
+  showNewsDialog.value = true;
+};
+
+const closeNewsDialog = () => {
+  showNewsDialog.value = false;
+  selectedNews.value = null;
 };
 </script>
 
 <template>
-  <div class="min-h-screen bg-primary-50 pb-24 flex flex-col">
-    <!-- 上方功能列 -->
-    <header class="bg-primary-500 text-white shadow-lg px-4 py-10 sm:py-12">
-      <div class="flex items-center justify-center">
-        <h1 class="text-3xl font-bold">即時風況</h1>
-      </div>
-    </header>
-
+  <div class="min-h-screen bg-primary-50 pb-32 flex flex-col">
     <!-- 中間風況與篩選 -->
     <main class="flex-1 overflow-y-auto px-4 py-6">
       <!-- 篩選功能 -->
@@ -211,6 +214,71 @@ const openNewsDetail = (newsItem: NewsItem) => {
 
     <!-- 底部導航 -->
     <BottomNav />
+
+    <!-- 新聞詳情彈窗 -->
+    <Teleport to="body">
+      <Transition name="dialog">
+        <div
+          v-if="showNewsDialog && selectedNews"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          @click="closeNewsDialog"
+        >
+          <div
+            class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
+            @click.stop
+          >
+            <!-- 標題區 -->
+            <div class="bg-primary-500 text-white px-6 py-4">
+              <div class="flex items-start justify-between">
+                <h3 class="text-xl font-bold flex-1 pr-4">{{ selectedNews.title }}</h3>
+                <button
+                  @click="closeNewsDialog"
+                  class="text-white hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
+                >
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div class="flex items-center gap-3 mt-3 text-sm">
+                <span class="px-3 py-1 bg-white/20 rounded-full">{{ selectedNews.source }}</span>
+                <span class="text-white/80">{{ selectedNews.time }}</span>
+              </div>
+            </div>
+
+            <!-- 內容區 -->
+            <div class="px-6 py-6 overflow-y-auto max-h-[calc(80vh-180px)]">
+              <p class="text-grey-700 leading-relaxed whitespace-pre-line">
+                {{ selectedNews.summary }}
+              </p>
+              
+              <!-- 這裡可以添加更多詳細內容 -->
+              <div class="mt-6 p-4 bg-primary-50 rounded-lg">
+                <p class="text-sm text-grey-600">
+                  💡 提示：這是模擬的新聞詳情內容。實際應用中，這裡會顯示完整的新聞報導、圖片等資訊。
+                </p>
+              </div>
+            </div>
+
+            <!-- 底部操作區 -->
+            <div class="px-6 py-4 bg-grey-50 border-t border-grey-200 flex gap-3">
+              <button
+                @click="closeNewsDialog"
+                class="flex-1 px-4 py-3 bg-grey-200 text-grey-700 rounded-lg font-medium hover:bg-grey-300 transition-colors"
+              >
+                關閉
+              </button>
+              <button
+                class="flex-1 px-4 py-3 bg-primary-500 text-white rounded-lg font-medium hover:bg-primary-600 transition-colors"
+                @click="closeNewsDialog"
+              >
+                了解更多
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -231,5 +299,27 @@ section::-webkit-scrollbar-thumb {
 
 section::-webkit-scrollbar-thumb:hover {
   background: #555;
+}
+
+/* Dialog 動畫 */
+.dialog-enter-active,
+.dialog-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
+}
+
+.dialog-enter-active .bg-white,
+.dialog-leave-active .bg-white {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.dialog-enter-from .bg-white,
+.dialog-leave-to .bg-white {
+  transform: scale(0.9);
+  opacity: 0;
 }
 </style>

@@ -39,12 +39,10 @@ const openGoogleMaps = () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-grey-50 pb-24 flex flex-col">
-    <!-- 上方標題與搜尋欄 -->
-    <header class="bg-green-500 text-white shadow-lg px-4 py-10 sm:py-12">
+  <div class="min-h-screen bg-grey-50 pb-32 flex flex-col">
+    <!-- 搜尋欄 -->
+    <div class="bg-green-500 text-white shadow-lg px-4 py-6">
       <div class="max-w-3xl mx-auto">
-        <h1 class="text-3xl font-bold mb-6 text-center">即時路況</h1>
-
         <div class="w-full space-y-3">
           <div class="bg-white rounded-lg p-1 shadow-md">
             <Input
@@ -68,7 +66,7 @@ const openGoogleMaps = () => {
           </Button>
         </div>
       </div>
-    </header>
+    </div>
 
     <!-- 中間路線顯示區 -->
     <main class="flex-1 overflow-y-auto px-4 py-6">
