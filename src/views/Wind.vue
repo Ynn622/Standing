@@ -1,16 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import BottomNav from '@/components/BottomNav.vue';
 import Select from '@/components/base/Select.vue';
 import Dialog from '@/components/base/Dialog.vue';
-
-interface NewsItem {
-  id: number;
-  title: string;
-  summary: string;
-  time: string;
-  source: string;
-}
+import { getWindMetrics, getWindNews } from '@/utils/api';
+import type { NewsItem } from '@/utils/api';
 
 const selectedDate = ref('today');
 const selectedTime = ref('now');
@@ -39,44 +33,9 @@ const regionOptions = [
   { label: '高雄', value: 'kaohsiung' }
 ];
 
-const windData = computed(() => ({
-  speed: '15',
-  direction: '東北風',
-  temperature: '25',
-  humidity: '65',
-  pressure: '1013'
-}));
+const windData = getWindMetrics();
 
-const news = ref<NewsItem[]>([
-  {
-    id: 1,
-    title: '東北季風增強 北部轉涼有雨',
-    summary: '受東北季風影響，北部地區氣溫下降3-5度，並有局部陣雨...',
-    time: '2小時前',
-    source: '中央氣象署'
-  },
-  {
-    id: 2,
-    title: '強風特報 沿海地區需注意',
-    summary: '今日午後東北風持續增強，沿海空曠地區陣風可達8-9級...',
-    time: '5小時前',
-    source: '氣象局'
-  },
-  {
-    id: 3,
-    title: '週末天氣轉好 適合戶外活動',
-    summary: '預計週末東北季風減弱，各地多雲到晴，溫度回升...',
-    time: '1天前',
-    source: '天氣風險公司'
-  },
-  {
-    id: 4,
-    title: '空氣品質預報 中南部需注意',
-    summary: '受風向影響，中南部地區空氣品質可能達到橘色提醒等級...',
-    time: '1天前',
-    source: '環保署'
-  }
-]);
+const news = ref<NewsItem[]>(getWindNews());
 
 const selectedNews = ref<NewsItem | null>(null);
 const showNewsDialog = ref(false);

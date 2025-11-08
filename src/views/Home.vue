@@ -1,60 +1,21 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
 import BottomNav from '@/components/BottomNav.vue';
+import { getHomeOverview } from '@/utils/api';
 
 const router = useRouter();
 
-const location = '臺北市信義區莊敬路391巷22號';
-const advisory = '行車建議：盡可能減少外出';
-
-const windInfo = {
-  speed: '10.5',
-  unit: 'm/s',
-  direction: '東北風',
-  intensity: 70
-};
-
-const drivingAdvice = '持續有強陣風與短暫大雨，建議非必要不要駕車上路。';
-
-const services = [
-  { id: 'traffic', name: '路況檢視', icon: '🚗', route: 'traffic' },
-  { id: 'safe-nav', name: '安全導航', icon: '🧭', route: 'traffic' },
-  { id: 'report', name: '障礙回報', icon: '⚠️', route: 'traffic' },
-  { id: 'wind', name: '風況詳情', icon: '🌪️', route: 'wind' },
-  { id: 'settings', name: '個人設定', icon: '⚙️', route: 'settings' }
-];
-
-const mapPreview = {
-  title: '路況查看',
-  addressHint: '顯示詳細地址 >',
-  road: '信義路五段',
-  landmark: '台北101',
-  updatedAt: '更新於 2 分鐘前'
-};
-
-const googleMapEmbed =
-  'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3615.022253974696!2d121.56235021214552!3d25.03396498397207!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3442abbf0c93418d%3A0x64db763b69ad2b6!2z5Y-w5YyXIDEwMQ!5e0!3m2!1szh-TW!2stw!4v1717132800000!5m2!1szh-TW!2stw';
-
-const streetInfo = {
-  intersection: '莊敬路391巷 x 信義路五段',
-  status: '街口資料讀取中，等待 API 注入',
-  source: '資料來源：智慧交通 API（預留）'
-};
-
-const newsList = [
-  {
-    id: 1,
-    title: '北部持續豪大雨 勿強行涉水',
-    summary: '台北一名大學生於返家路上遭遇颱風外圍環流，雨勢造成能見度低，駕駛須減速慢行。',
-    thumbnail: ''
-  },
-  {
-    id: 2,
-    title: '東部山區出現落石 須注意',
-    summary: '花蓮天祥路段傳出落石，公路總局籲民眾暫勿前往並密切關注最新路況資訊。',
-    thumbnail: ''
-  }
-];
+const {
+  location,
+  advisory,
+  windInfo,
+  drivingAdvice,
+  services,
+  mapPreview,
+  googleMapEmbed,
+  streetInfo,
+  newsList
+} = getHomeOverview();
 
 const navigateTo = (routeName: string) => {
   router.push({ name: routeName });
@@ -145,6 +106,7 @@ const navigateTo = (routeName: string) => {
               title="Google Maps"
               class="h-full w-full border-0"
               loading="lazy"
+              allowfullscreen
               referrerpolicy="no-referrer-when-downgrade"
             ></iframe>
           </div>

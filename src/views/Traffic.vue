@@ -1,132 +1,182 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import BottomNav from '@/components/BottomNav.vue';
-import Input from '@/components/base/Input.vue';
-import Button from '@/components/base/Button.vue';
+import {
+  getTrafficLayerPresets,
+  getTrafficMapEmbedUrl,
+  getTrafficTabs
+} from '@/utils/api';
+import type { TrafficTab } from '@/utils/api';
 
-const departure = ref('');
-const destination = ref('');
-const routes = ref<Array<{ name: string; duration: string; distance: string }>>([]);
-const isSearching = ref(false);
+const router = useRouter();
 
-const searchRoute = () => {
-  if (!departure.value || !destination.value) {
-    alert('請輸入出發地和目的地');
-    return;
+const filters = getTrafficTabs();
+const layerPresets = getTrafficLayerPresets();
+const mapEmbedUrl = getTrafficMapEmbedUrl();
+
+const selectedFilters = ref<TrafficTab['id'][]>([]);
+
+const detailLayerId = ref<TrafficTab['id'] | null>(null);
+
+const toggleFilter = (filterId: TrafficTab['id']) => {
+  const currentIndex = selectedFilters.value.indexOf(filterId);
+  if (currentIndex > -1) {
+    selectedFilters.value.splice(currentIndex, 1);
+  } else {
+    selectedFilters.value.push(filterId);
   }
-
-  isSearching.value = true;
-
-  // 模擬搜尋
-  setTimeout(() => {
-    routes.value = [
-      { name: '建議路線 1', duration: '25 分鐘', distance: '8.5 公里' },
-      { name: '建議路線 2', duration: '30 分鐘', distance: '7.2 公里' },
-      { name: '建議路線 3', duration: '35 分鐘', distance: '9.8 公里' }
-    ];
-    isSearching.value = false;
-  }, 1000);
+  // TODO: 根據 selectedFilters 的陣列呼叫地圖 Layer API 顯示對應圖層
 };
 
-const openGoogleMaps = () => {
-  if (!departure.value || !destination.value) {
-    alert('請先輸入出發地和目的地');
+watch(selectedFilters, (filters) => {
+  if (detailLayerId.value && !filters.includes(detailLayerId.value)) {
+    detailLayerId.value = null;
+  }
+});
+
+const hasSelection = computed(() => selectedFilters.value.length > 0);
+
+const activeLayers = computed(() =>
+  selectedFilters.value.map(id => ({
+    id,
+    ...layerPresets[id]
+  }))
+);
+
+const detailLayer = computed(() => {
+  if (!detailLayerId.value) {
+    return null;
+  }
+  const preset = layerPresets[detailLayerId.value];
+  if (!preset) {
+    return null;
+  }
+  return {
+    id: detailLayerId.value,
+    ...preset
+  };
+});
+
+const handleLayerClick = (layerId: TrafficTab['id']) => {
+  if (!selectedFilters.value.includes(layerId)) {
     return;
   }
-  const url = `https://www.google.com/maps/dir/${encodeURIComponent(departure.value)}/${encodeURIComponent(destination.value)}`;
-  window.open(url, '_blank');
+  detailLayerId.value = layerId;
+  // TODO: 接上地圖 click 事件後可在此觸發
+};
+
+const goHome = () => {
+  router.push({ name: 'home' });
 };
 </script>
 
 <template>
-  <div class="min-h-screen bg-grey-50 pb-32 flex flex-col">
-    <!-- 搜尋欄 -->
-    <div class="bg-green-500 text-white shadow-lg px-4 py-6">
-      <div class="max-w-3xl mx-auto">
-        <div class="w-full space-y-3">
-          <div class="bg-white rounded-lg p-1 shadow-md">
-            <Input
-              v-model="departure"
-              placeholder="🚩 輸入出發地"
-              class="bg-transparent border-0"
-            />
-          </div>
-          <div class="bg-white rounded-lg p-1 shadow-md">
-            <Input
-              v-model="destination"
-              placeholder="📍 輸入目的地"
-              class="bg-transparent border-0"
-            />
-          </div>
-          <Button
-            @click="searchRoute"
-            class="w-full bg-white text-green-500 font-bold hover:bg-grey-50"
+  <div class="min-h-screen bg-white pb-24">
+    <main class="mx-auto flex max-w-5xl flex-col gap-3 px-4 pt-4">
+      <!-- 分類標籤列 -->
+      <section class="rounded-2xl border border-grey-100 px-3 py-3 shadow-sm">
+        <div class="grid grid-cols-3 gap-2">
+          <button
+            v-for="filter in filters"
+            :key="filter.id"
+            type="button"
+            class="w-full rounded-full border px-3 py-1.5 text-center text-sm font-medium transition-all"
+            :class="
+              selectedFilters.includes(filter.id)
+                ? 'shadow-sm text-white'
+                : ''
+            "
+            :style="selectedFilters.includes(filter.id)
+              ? {
+                borderColor: layerPresets[filter.id].color,
+                backgroundColor: layerPresets[filter.id].color,
+                boxShadow: `0 4px 12px ${layerPresets[filter.id].color}33`
+              }
+              : {
+                borderColor: `${layerPresets[filter.id].color}66`,
+                color: layerPresets[filter.id].color,
+                backgroundColor: `${layerPresets[filter.id].color}10`
+              }"
+            @click="toggleFilter(filter.id)"
           >
-            {{ isSearching ? '搜尋中...' : '🔍 搜尋路線' }}
-          </Button>
+            {{ filter.label }}
+          </button>
         </div>
-      </div>
-    </div>
+        <p class="mt-2 text-xs text-grey-400">
+          可複選路段類型，自訂顯示的地圖圖層
+        </p>
+      </section>
 
-    <!-- 中間路線顯示區 -->
-    <main class="flex-1 overflow-y-auto px-4 py-6">
-      <div v-if="routes.length === 0" class="flex flex-col items-center justify-center min-h-[40vh] text-grey-400">
-        <span class="text-6xl mb-4">🗺️</span>
-        <p class="text-lg">請輸入出發地和目的地以開始規劃路線</p>
-      </div>
+      <!-- 地圖顯示區 -->
+      <section class="flex-1 rounded-3xl border border-grey-100 shadow-lg">
+        <div class="map-shell relative h-full min-h-[70vh] overflow-hidden rounded-3xl">
+          <iframe
+            :src="mapEmbedUrl"
+            title="Taipei live traffic map"
+            class="h-full w-full border-0"
+            loading="lazy"
+            allowfullscreen
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
 
-      <div v-else class="max-w-3xl mx-auto space-y-4">
-        <h2 class="text-xl font-bold text-grey-800 mb-4">推薦路線</h2>
-
-        <div
-          v-for="(route, index) in routes"
-          :key="index"
-          class="bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-shadow cursor-pointer border-2 border-transparent hover:border-green-500"
-        >
-          <div class="flex items-center justify-between">
-            <div class="flex-1">
-              <h3 class="text-lg font-bold text-grey-800 mb-2">{{ route.name }}</h3>
-              <div class="flex items-center space-x-4 text-sm text-grey-600">
-                <span class="flex items-center">
-                  <span class="mr-1">⏱️</span>
-                  {{ route.duration }}
-                </span>
-                <span class="flex items-center">
-                  <span class="mr-1">📏</span>
-                  {{ route.distance }}
-                </span>
+          <!-- 浮動資訊卡 -->
+          <div class="absolute inset-x-4 top-4 rounded-2xl bg-white/95 p-4 shadow-lg">
+            <div v-if="detailLayer">
+              <div class="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-grey-500">
+                <span>路段詳情</span>
+                <button class="text-xs font-semibold text-primary-500" @click="detailLayerId = null">
+                  關閉
+                </button>
               </div>
+              <h2 class="mt-2 text-lg font-bold" :style="{ color: detailLayer.color }">
+                {{ detailLayer.title }}
+              </h2>
+              <p class="mt-1 text-sm text-grey-600">
+                {{ detailLayer.description }}
+              </p>
+              <p class="mt-2 text-xs font-medium text-grey-500">
+                {{ detailLayer.highlight }}
+              </p>
             </div>
-            <div class="text-3xl">
-              {{ index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉' }}
+            <div v-else>
+              <h2 class="text-base font-bold text-grey-800">點擊地圖上的標記</h2>
+              <p v-if="hasSelection" class="mt-1 text-sm text-grey-600">
+                已顯示 {{ selectedFilters.length }} 種路段，請點擊對應的標記以查看詳情。
+              </p>
+              <p v-else class="mt-1 text-sm text-grey-600">
+                先從上方篩選要顯示的路段類型，再點擊地圖上的標記查看詳情。
+              </p>
             </div>
+            <p class="mt-3 text-[11px] text-grey-400">雙指縮放地圖，點擊標記查看詳細資訊。</p>
+          </div>
+
+          <!-- 選中路段徽章 -->
+          <div
+            v-if="hasSelection"
+            class="absolute left-4 bottom-24 flex flex-wrap gap-2 rounded-2xl bg-white/90 px-3 py-2 shadow"
+          >
+            <button
+              v-for="layer in activeLayers"
+              :key="layer.id"
+              class="rounded-full border px-3 py-1 text-xs font-semibold"
+              :style="{ borderColor: layer.color, color: layer.color }"
+              @click="handleLayerClick(layer.id)"
+            >
+              {{ layer.title }}
+            </button>
           </div>
         </div>
-
-        <!-- Google Map 轉跳按鈕 -->
-        <div class="mt-8 flex justify-center md:justify-end">
-          <Button
-            @click="openGoogleMaps"
-            class="w-full md:w-auto bg-primary-500 text-white shadow-xl rounded-full px-6 py-4 hover:bg-primary-600"
-          >
-            <span class="flex items-center space-x-2">
-              <span>🗺️</span>
-              <span class="font-bold">Google Map</span>
-            </span>
-          </Button>
-        </div>
-      </div>
+      </section>
     </main>
 
-    <!-- 底部導航 (15%) -->
+    <!-- 底部導航 -->
     <BottomNav />
   </div>
 </template>
 
 <style scoped>
-/* 移除 Input 組件的預設樣式 */
-:deep(.base-input) {
-  border: none;
-  box-shadow: none;
+.map-shell iframe {
+  filter: saturate(1.05);
 }
 </style>
