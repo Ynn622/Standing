@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onActivated, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import BottomNav from '@/components/BottomNav.vue';
 import WindIcon from '@/assets/navicons/Wind.png';
@@ -74,6 +74,7 @@ const locationError = ref<string | null>(null);
 const userCoords = ref<{ lat: number; lng: number } | null>(null);
 const mapEmbedUrl = ref(googleMapEmbed);
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
+const hasAutoRequestedLocation = ref(false);
 
 const navigateTo = (routeName: string) => {
   router.push({ name: routeName });
@@ -347,6 +348,14 @@ const requestUserLocation = () => {
   );
 };
 
+const autoRequestLocation = () => {
+  if (hasAutoRequestedLocation.value || isLocating.value) {
+    return;
+  }
+  hasAutoRequestedLocation.value = true;
+  requestUserLocation();
+};
+
 const loadPoliceNews = async () => {
   try {
     isNewsLoading.value = true;
@@ -457,6 +466,13 @@ onMounted(() => {
   loadPoliceNews();
   loadWindStations();
   loadFutureForecastForTown();
+  autoRequestLocation();
+});
+
+onActivated(() => {
+  if (!userCoords.value) {
+    autoRequestLocation();
+  }
 });
 </script>
 

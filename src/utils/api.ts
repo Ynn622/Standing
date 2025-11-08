@@ -580,8 +580,8 @@ export const extractFutureWindForecast = (
 
 export const getMapEmbedUrlFromCoords = (lat: number, lng: number): string => {
   if (VITE_GOOGLE_MAPS_API_KEY) {
-    const base = 'https://www.google.com/maps/embed/v1/view';
-    return `${base}?key=${VITE_GOOGLE_MAPS_API_KEY}&center=${lat},${lng}&zoom=15&maptype=roadmap`;
+    const base = 'https://www.google.com/maps/embed/v1/place';
+    return `${base}?key=${VITE_GOOGLE_MAPS_API_KEY}&q=${lat},${lng}&zoom=15&maptype=roadmap`;
   }
   return `https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`;
 };

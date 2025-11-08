@@ -5,7 +5,8 @@ import BottomNav from '@/components/BottomNav.vue';
 import {
   getTrafficLayerPresets,
   getTrafficMapEmbedUrl,
-  getTrafficTabs
+  getTrafficTabs,
+  getMapEmbedUrlFromCoords
 } from '@/utils/api';
 import type { TrafficTab } from '@/utils/api';
 
@@ -14,6 +15,11 @@ const router = useRouter();
 const filters = getTrafficTabs();
 const layerPresets = getTrafficLayerPresets();
 const mapEmbedUrl = getTrafficMapEmbedUrl();
+const currentMapEmbed = ref(mapEmbedUrl);
+const userCoords = ref<{ lat: number; lng: number } | null>(null);
+const isLocating = ref(false);
+const locationError = ref<string | null>(null);
+const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
 
 const selectedFilters = ref<TrafficTab['id'][]>(
   filters.length ? [filters[0].id] : []
@@ -73,10 +79,54 @@ const goHome = () => {
 };
 
 const openTrafficMap = () => {
-  if (!mapEmbedUrl) {
+  const targetUrl = userCoords.value
+    ? `https://www.google.com/maps/search/?api=1&query=${userCoords.value.lat},${userCoords.value.lng}`
+    : mapEmbedUrl;
+  if (!targetUrl) {
     return;
   }
-  window.open(mapEmbedUrl, '_blank', 'noopener');
+  window.open(targetUrl, '_blank', 'noopener');
+};
+
+const locationLabel = computed(() => {
+  if (!userCoords.value) {
+    return '尚未鎖定座標';
+  }
+  return `緯度 ${userCoords.value.lat.toFixed(5)}、經度 ${userCoords.value.lng.toFixed(5)}`;
+});
+
+const requestUserLocation = () => {
+  if (!canUseGeolocation || typeof navigator === 'undefined') {
+    locationError.value = '此裝置不支援定位功能';
+    return;
+  }
+  isLocating.value = true;
+  locationError.value = null;
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const { latitude, longitude } = position.coords;
+      userCoords.value = { lat: latitude, lng: longitude };
+      currentMapEmbed.value = getMapEmbedUrlFromCoords(latitude, longitude);
+      isLocating.value = false;
+    },
+    (error) => {
+      isLocating.value = false;
+      switch (error.code) {
+        case error.PERMISSION_DENIED:
+          locationError.value = '使用者拒絕定位授權';
+          break;
+        case error.POSITION_UNAVAILABLE:
+          locationError.value = '定位資訊不可用';
+          break;
+        case error.TIMEOUT:
+          locationError.value = '定位逾時，請重新嘗試';
+          break;
+        default:
+          locationError.value = '無法取得定位資訊';
+      }
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+  );
 };
 </script>
 
@@ -118,17 +168,26 @@ const openTrafficMap = () => {
       </section>
 
       <!-- 地圖顯示區 -->
-      <section class="flex-1 rounded-3xl border border-grey-100 shadow-lg">
-        <div class="map-embed map-embed--tall">
+      <section class="flex-1 rounded-3xl border border-grey-100 shadow-lg overflow-hidden">
+        <div class="map-embed map-embed--tall h-full min-h-[360px]">
           <iframe
-            :src="mapEmbedUrl"
+            :src="currentMapEmbed"
             title="Taipei live traffic map"
             loading="lazy"
             allowfullscreen
             referrerpolicy="no-referrer-when-downgrade"
+            class="absolute inset-0 h-full w-full"
           ></iframe>
           <div class="map-embed__badge">即時路況</div>
           <div class="map-embed__actions">
+            <button
+              type="button"
+              class="map-action-btn"
+              :disabled="isLocating"
+              @click="requestUserLocation"
+            >
+              {{ isLocating ? '定位中...' : '重新定位' }}
+            </button>
             <button type="button" class="map-action-btn" @click="goHome">
               回首頁
             </button>
@@ -181,6 +240,18 @@ const openTrafficMap = () => {
               {{ layer.title }}
             </button>
           </div>
+        </div>
+      </section>
+
+      <section class="rounded-2xl border border-dashed border-primary-100 bg-white/90 px-4 py-4 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-grey-500">定位資訊</p>
+        <p class="mt-1 text-sm text-grey-700">
+          授權後可將地圖自動聚焦於您的所在路段，便於判斷周遭交通狀況。
+        </p>
+        <div class="mt-3 rounded-xl border border-grey-100 bg-white/80 px-3 py-2 text-xs text-grey-600">
+          <p class="font-semibold text-grey-800">目前鎖定：{{ locationLabel }}</p>
+          <p v-if="locationError" class="mt-1 text-rose-500">{{ locationError }}</p>
+          <p v-else class="mt-1 text-grey-400">若未跳出定位授權提示，請確認 App 已開啟 GPS 權限。</p>
         </div>
       </section>
     </main>
