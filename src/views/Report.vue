@@ -1,26 +1,56 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 import BottomNav from '@/components/BottomNav.vue';
 import Button from '@/components/base/Button.vue';
+import GoogleMap from '@/components/common/GoogleMap.vue';
 import ReportIcon from '@/assets/navicons/Report.png';
 import TreeIcon from '@/assets/reporticon/tree.png';
 import FallenIcon from '@/assets/reporticon/fallen.png';
 import AccidentIcon from '@/assets/reporticon/accident.png';
 import OthersIcon from '@/assets/reporticon/others.png';
-import { getObstacleReportData, getMapEmbedUrlFromCoords } from '@/utils/api';
-import type { ObstacleTypeOption } from '@/utils/api';
+import {
+  getObstacleReportData,
+  reverseGeocode,
+  submitObstacleReport,
+  fetchObstacleIssuesByStatus,
+  updateObstacleIssueStatus,
+  geocodeAddress
+} from '@/utils/api';
+import type { ObstacleTypeOption, ObstacleIssueRecord } from '@/utils/api';
+import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
 
 const { obstacleTypes, mapEmbedUrl: defaultMapEmbed, helperText } = getObstacleReportData();
 
 const selectedType = ref<ObstacleTypeOption['id'] | null>(null);
 const description = ref('');
 const isSubmitting = ref(false);
-const showSuccess = ref(false);
-const currentMapEmbed = ref(defaultMapEmbed);
-const userCoords = ref<{ lat: number; lng: number } | null>(null);
+const toastState = ref<{ message: string; variant: 'success' | 'error' } | null>(null);
+const defaultCenter: LatLng = { lat: 25.033964, lng: 121.564468 };
+const mapCenter = ref<LatLng>(defaultCenter);
+const userCoords = ref<LatLng | null>(null);
+const locationInput = ref('');
 const isLocating = ref(false);
 const locationError = ref<string | null>(null);
+const issues = ref<ObstacleIssueRecord[]>([]);
+const isIssueLoading = ref(false);
+const issueError = ref<string | null>(null);
+const updatingIssueId = ref<string | null>(null);
+const issueCoordinates = ref<Record<string, LatLng>>({});
+const activeIssue = ref<ObstacleIssueRecord | null>(null);
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
+
+const normalizeAddress = (value?: string | null) => (value ?? '').replace(/\s+/g, '');
+
+const extractLocationKeyword = (value?: string | null) => {
+  if (!value) return '';
+  const normalized = normalizeAddress(value);
+  if (!normalized) return '';
+  const match = normalized.match(/(.+?(?:縣|市|區))/);
+  if (match) {
+    return match[0];
+  }
+  return normalized.slice(0, 4);
+};
 
 const toggleType = (typeId: ObstacleTypeOption['id']) => {
   selectedType.value = selectedType.value === typeId ? null : typeId;
@@ -37,12 +67,90 @@ const selectedTypeLabel = computed(() => {
 });
 
 const canSubmit = computed(
-  () => Boolean(selectedType.value) && description.value.trim().length >= 8
+  () =>
+    Boolean(selectedType.value) &&
+    description.value.trim().length >= 8 &&
+    locationInput.value.trim().length > 0
 );
+
+const locationKeyword = computed(() => extractLocationKeyword(locationInput.value));
+
+const nearbyIssues = computed(() => {
+  if (!issues.value.length) {
+    return [];
+  }
+  const keyword = locationKeyword.value;
+  if (!keyword) {
+    return issues.value.slice(0, 5);
+  }
+  const filtered = issues.value.filter((issue) =>
+    normalizeAddress(issue.address).includes(keyword)
+  );
+  return (filtered.length ? filtered : issues.value).slice(0, 5);
+});
+
+const mapMarkers = computed<MapMarkerDescriptor[]>(() => {
+  const markers: MapMarkerDescriptor[] = [];
+  if (userCoords.value) {
+    markers.push({
+      id: 'user-location',
+      position: userCoords.value,
+      color: '#1F8A70',
+      label: '目前定位',
+      zIndex: 10
+    });
+  }
+  nearbyIssues.value.forEach((issue) => {
+    const coords = issueCoordinates.value[issue.id];
+    if (!coords) return;
+    markers.push({
+      id: `issue-${issue.id}`,
+      position: coords,
+      color: '#1D7FBF',
+      label: issue.type,
+      zIndex: 5,
+      meta: { issue }
+    });
+  });
+  return markers;
+});
+
+const handleMarkerClick = (marker: MapMarkerDescriptor) => {
+  const issue = marker.meta?.issue as ObstacleIssueRecord | undefined;
+  if (issue) {
+    activeIssue.value = issue;
+  }
+};
+
+const closeIssuePanel = () => {
+  activeIssue.value = null;
+};
 
 const resetForm = () => {
   selectedType.value = null;
   description.value = '';
+};
+
+const triggerToast = (message: string, variant: 'success' | 'error' = 'success') => {
+  toastState.value = { message, variant };
+  setTimeout(() => {
+    toastState.value = null;
+  }, 2400);
+};
+
+const formatIssueTime = (value?: string) => {
+  if (!value) return '未知時間';
+  const normalized = value.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat('zh-TW', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(parsed);
 };
 
 const submitReport = async () => {
@@ -50,13 +158,26 @@ const submitReport = async () => {
     return;
   }
   isSubmitting.value = true;
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-  isSubmitting.value = false;
-  showSuccess.value = true;
-  setTimeout(() => {
-    showSuccess.value = false;
-  }, 2400);
-  resetForm();
+  try {
+    const payload = {
+      address: locationInput.value.trim(),
+      obstacleType: selectedTypeLabel.value ?? selectedType.value ?? '其他',
+      description: description.value.trim()
+    };
+    const result = await submitObstacleReport(payload);
+    if (!result.success) {
+      throw new Error(result.message ?? '回報失敗，請稍後再試');
+    }
+    triggerToast('已完成回報', 'success');
+    resetForm();
+  } catch (error) {
+    triggerToast(
+      error instanceof Error ? `回報失敗：${error.message}` : '無法送出回報，請稍後再試',
+      'error'
+    );
+  } finally {
+    isSubmitting.value = false;
+  }
 };
 
 const hexToRgba = (hexColor: string, alpha: number) => {
@@ -117,10 +238,18 @@ const requestUserLocation = () => {
   isLocating.value = true;
   locationError.value = null;
   navigator.geolocation.getCurrentPosition(
-    (position) => {
+    async (position) => {
       const { latitude, longitude } = position.coords;
-      userCoords.value = { lat: latitude, lng: longitude };
-      currentMapEmbed.value = getMapEmbedUrlFromCoords(latitude, longitude);
+      const coords = { lat: latitude, lng: longitude };
+      userCoords.value = coords;
+      mapCenter.value = coords;
+      try {
+        const address = await reverseGeocode(latitude, longitude);
+        locationInput.value = address;
+      } catch (error) {
+        console.warn('reverse geocode failed', error);
+        locationInput.value = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      }
       isLocating.value = false;
     },
     (error) => {
@@ -142,6 +271,80 @@ const requestUserLocation = () => {
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
   );
 };
+
+const loadIssues = async (status: 'Unsolved' | 'Resolved' | 'InProgress' = 'Unsolved') => {
+  isIssueLoading.value = true;
+  issueError.value = null;
+  try {
+    const list = await fetchObstacleIssuesByStatus(status);
+    issues.value = list;
+  } catch (error) {
+    console.warn('載入障礙清單失敗', error);
+    issueError.value = '無法取得回報清單';
+  } finally {
+    isIssueLoading.value = false;
+  }
+};
+
+const markIssueResolved = async (issue: ObstacleIssueRecord) => {
+  if (issue.status === 'Resolved' || updatingIssueId.value === issue.id) {
+    return;
+  }
+  updatingIssueId.value = issue.id;
+  try {
+    const result = await updateObstacleIssueStatus(issue.id, 'Resolved');
+    if (!result.success) {
+      throw new Error(result.message ?? '標記失敗');
+    }
+    issue.status = 'Resolved';
+    triggerToast('已完成回報');
+  } catch (error) {
+    triggerToast(
+      error instanceof Error ? `標記失敗：${error.message}` : '無法更新狀態，請稍後再試',
+      'error'
+    );
+  } finally {
+    updatingIssueId.value = null;
+  }
+};
+
+onMounted(() => {
+  loadIssues();
+});
+
+watch(nearbyIssues, async (list) => {
+  const candidates = list.slice(0, 5);
+  for (const issue of candidates) {
+    if (issueCoordinates.value[issue.id]) {
+      continue;
+    }
+    const coords = await geocodeAddress(issue.address);
+    if (coords) {
+      issueCoordinates.value = {
+        ...issueCoordinates.value,
+        [issue.id]: coords
+      };
+    }
+  }
+}, { immediate: true });
+
+watch(
+  () => ({ user: userCoords.value, coords: issueCoordinates.value, list: nearbyIssues.value }),
+  () => {
+    if (userCoords.value) {
+      mapCenter.value = userCoords.value;
+      return;
+    }
+    const firstIssueId = nearbyIssues.value.find(issue => issueCoordinates.value[issue.id])?.id;
+    if (firstIssueId) {
+      mapCenter.value = issueCoordinates.value[firstIssueId];
+    }
+    if (activeIssue.value && !nearbyIssues.value.some(issue => issue.id === activeIssue.value?.id)) {
+      activeIssue.value = null;
+    }
+  },
+  { deep: true }
+);
 </script>
 
 <template>
@@ -162,14 +365,7 @@ const requestUserLocation = () => {
       <!-- 地圖區 -->
       <section class="rounded-3xl border border-grey-100 shadow-lg overflow-hidden">
         <div class="map-embed map-embed--tall h-full min-h-[360px]">
-          <iframe
-            :src="currentMapEmbed"
-            title="障礙回報地圖"
-            loading="lazy"
-            allowfullscreen
-            referrerpolicy="no-referrer-when-downgrade"
-            class="absolute inset-0 h-full w-full"
-          ></iframe>
+          <GoogleMap :center="mapCenter" :markers="mapMarkers" :zoom="15" @marker-click="handleMarkerClick" />
           <div class="map-embed__badge">障礙定位</div>
           <div class="map-embed__actions">
             <button
@@ -184,33 +380,128 @@ const requestUserLocation = () => {
         </div>
       </section>
 
-      <section class="rounded-2xl border border-dashed border-primary-100 bg-white/90 px-4 py-4 shadow-sm">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-grey-500">Google Maps</p>
-        <p class="mt-1 text-sm text-grey-700">
-          拖曳地圖或縮放以校正障礙定位，預留 Google Maps SDK 與街口 API 欄位。
-        </p>
-        <div class="mt-2 rounded-xl border border-grey-100 bg-white/70 px-3 py-2 text-xs text-grey-600">
-          <p class="font-semibold text-grey-800">
-            目前鎖定：{{ locationLabel }}
-          </p>
-          <p v-if="locationError" class="mt-1 text-rose-500">
-            {{ locationError }}
-          </p>
-          <p v-else class="mt-1 text-grey-400">
-            若未跳出授權提示，請確認 App 已開啟 GPS 權限後再重試。
-          </p>
+      <Transition name="issue-panel">
+        <div
+          v-if="activeIssue"
+          class="fixed inset-x-4 top-20 z-40 rounded-2xl border border-primary-100 bg-white px-4 py-4 shadow-2xl"
+        >
+          <div class="flex items-start justify-between">
+            <div>
+              <p class="text-xs text-grey-500">{{ formatIssueTime(activeIssue.time) }}</p>
+              <h3 class="text-lg font-bold text-grey-900">{{ activeIssue.type }}</h3>
+              <p class="text-sm text-grey-600">{{ activeIssue.address }}</p>
+            </div>
+            <button type="button" class="text-grey-400 text-xl" @click="closeIssuePanel">✕</button>
+          </div>
+          <p class="mt-2 whitespace-pre-line text-sm text-grey-700">{{ activeIssue.description }}</p>
+          <div class="mt-4 flex items-center justify-between">
+            <span class="text-xs font-semibold" :class="activeIssue.status === 'Resolved' ? 'text-green-600' : 'text-amber-500'">
+              {{ activeIssue.status === 'Resolved' ? '已解決' : '待處理' }}
+            </span>
+            <button
+              type="button"
+              class="issue-action-btn"
+              :class="activeIssue.status === 'Resolved'
+                ? 'issue-action-btn--resolved'
+                : 'issue-action-btn--active'
+              "
+              :disabled="activeIssue.status === 'Resolved' || updatingIssueId === activeIssue.id"
+              @click="markIssueResolved(activeIssue)"
+            >
+              <span v-if="activeIssue.status === 'Resolved'">已標記</span>
+              <span v-else-if="updatingIssueId === activeIssue.id">標記中...</span>
+              <span v-else>標記已解決</span>
+            </button>
+          </div>
         </div>
-        <div class="mt-3 rounded-xl border border-dashed border-primary-200 bg-primary-50/80 p-3 text-xs text-grey-600">
-          <p class="text-sm font-semibold text-grey-900">街口資料（API 預留）</p>
-          <p class="mt-1 leading-relaxed text-grey-600">
-            {{ helperText }}
-          </p>
-        </div>
-      </section>
+      </Transition>
 
-      <!-- 障礙類型 + 問題描述 -->
+      <!-- 附近障礙回報 -->
+      <!-- <section class="rounded-2xl border border-grey-100 bg-white px-4 py-4 shadow-sm">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-lg font-bold text-grey-900">顯示附近障礙回報</h2>
+          <button
+            type="button"
+            class="text-xs font-semibold text-primary-500"
+            @click="loadIssues()"
+            :disabled="isIssueLoading"
+          >
+            {{ isIssueLoading ? '更新中...' : '重新整理' }}
+          </button>
+        </div>
+        <p class="text-xs text-grey-500">
+          依目前輸入地址篩選最近回報，方便確認是否有人處理。
+        </p>
+        <div v-if="issueError" class="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+          {{ issueError }}
+        </div>
+        <div v-else-if="isIssueLoading" class="mt-3 text-xs text-grey-500">
+          載入回報中...
+        </div>
+        <div v-else-if="!nearbyIssues.length" class="mt-3 text-xs text-grey-500">
+          目前沒有符合條件的回報，歡迎新增第一筆資料。
+        </div>
+        <ul v-else class="mt-3 space-y-3">
+          <li
+            v-for="issue in nearbyIssues"
+            :key="issue.id"
+            class="rounded-2xl border border-grey-100 bg-grey-50/80 px-3 py-3 text-sm text-grey-800"
+          >
+            <div class="flex items-center justify-between text-xs text-grey-500">
+              <span>{{ issue.type }}</span>
+              <span>{{ formatIssueTime(issue.time) }}</span>
+            </div>
+            <p class="mt-1 text-sm font-semibold text-grey-900">{{ issue.address }}</p>
+            <p class="mt-1 whitespace-pre-line text-xs text-grey-600">{{ issue.description }}</p>
+            <div class="mt-3 flex items-center justify-between">
+              <span class="text-[11px] font-medium" :class="issue.status === 'Resolved' ? 'text-green-600' : 'text-amber-500'">
+                {{ issue.status === 'Resolved' ? '已解決' : '待處理' }}
+              </span>
+              <button
+                type="button"
+                class="issue-action-btn"
+                :class="issue.status === 'Resolved'
+                  ? 'issue-action-btn--resolved'
+                  : 'issue-action-btn--active'
+                "
+                :disabled="issue.status === 'Resolved' || updatingIssueId === issue.id"
+                @click="markIssueResolved(issue)"
+              >
+                <span v-if="issue.status === 'Resolved'">已標記解決</span>
+                <span v-else-if="updatingIssueId === issue.id">標記中...</span>
+                <span v-else>標記已解決</span>
+              </button>
+            </div>
+          </li>
+        </ul>
+      </section> -->
+
+      <!-- 障礙位置 + 類型 + 問題描述 -->
       <section class="rounded-2xl border border-grey-100 bg-white px-4 py-4 shadow-sm">
         <div class="space-y-6">
+          <div>
+            <div class="mb-2 flex items-center justify-between">
+              <h2 class="text-lg font-bold text-grey-900">障礙位置</h2>
+              <button
+                type="button"
+                class="text-xs font-semibold text-primary-500"
+                @click="requestUserLocation"
+                :disabled="isLocating"
+              >
+                {{ isLocating ? '定位中...' : '重新取得座標' }}
+              </button>
+            </div>
+            <input
+              v-model="locationInput"
+              type="text"
+              class="w-full rounded-xl border border-grey-200 px-4 py-3 text-sm text-grey-800 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100"
+              placeholder="請輸入障礙所在地址或地標"
+            />
+            <p class="mt-1 text-xs text-grey-500">
+              預設為目前定位；可自行調整以更精準描述位置。
+            </p>
+          </div>
+
           <div>
             <div class="mb-3 flex items-center justify-between">
               <h2 class="text-lg font-bold text-grey-900">障礙類型</h2>
@@ -261,6 +552,7 @@ const requestUserLocation = () => {
             <p class="mt-2 text-xs text-grey-500">
               完整描述有助於後端研判處理優先順序，亦可補充現場聯絡方式。
             </p>
+            <p class="text-xs font-semibold text-primary-500">描述至少 8 個字才能送出。</p>
           </div>
         </div>
       </section>
@@ -278,6 +570,7 @@ const requestUserLocation = () => {
             </Button>
             <Button
               class="w-full rounded-2xl bg-primary-500 py-4 text-white shadow-lg"
+              :class="{ 'opacity-60 cursor-not-allowed': !canSubmit || isSubmitting }"
               :disabled="!canSubmit || isSubmitting"
               @click="submitReport"
             >
@@ -285,7 +578,7 @@ const requestUserLocation = () => {
             </Button>
           </div>
           <p class="text-xs text-grey-500">
-            送出後將記錄於障礙清單並通知交通指揮中心，回報紀錄會同步於個人頁。
+            送出後將把資料同步給交通指揮中心，並於後台障礙清單建立紀錄。
           </p>
         </div>
       </section>
@@ -293,10 +586,11 @@ const requestUserLocation = () => {
 
     <Transition name="toast">
       <div
-        v-if="showSuccess"
-        class="fixed inset-x-6 bottom-28 z-50 rounded-2xl bg-[#1F8A70] px-4 py-3 text-center text-sm font-semibold text-white shadow-xl"
+        v-if="toastState"
+        class="fixed inset-x-6 bottom-28 z-50 rounded-2xl px-4 py-3 text-center text-sm font-semibold text-white shadow-xl"
+        :class="toastState.variant === 'error' ? 'bg-rose-500' : 'bg-[#1F8A70]'"
       >
-        回報完成，資料已送至後端 API。
+        {{ toastState.message }}
       </div>
     </Transition>
 
@@ -323,5 +617,33 @@ const requestUserLocation = () => {
 .toast-leave-to {
   opacity: 0;
   transform: translateY(12px);
+}
+
+.issue-panel-enter-active,
+.issue-panel-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.issue-panel-enter-from,
+.issue-panel-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+
+.issue-action-btn {
+  @apply min-w-[120px] rounded-full border px-4 py-2 text-center text-xs font-semibold transition-all duration-200;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+}
+
+.issue-action-btn--active {
+  @apply border-primary-300 text-primary-600 bg-white;
+}
+
+.issue-action-btn--active:active {
+  transform: scale(0.97);
+}
+
+.issue-action-btn--resolved {
+  @apply border-green-200 text-green-600 bg-green-50 cursor-default;
 }
 </style>

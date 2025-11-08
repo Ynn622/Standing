@@ -3,8 +3,10 @@ import { computed, ref } from 'vue';
 import BottomNav from '@/components/BottomNav.vue';
 import Input from '@/components/base/Input.vue';
 import Button from '@/components/base/Button.vue';
-import { getSafeNavigationData, getMapEmbedUrlFromCoords } from '@/utils/api';
+import GoogleMap from '@/components/common/GoogleMap.vue';
+import { getSafeNavigationData } from '@/utils/api';
 import type { SafeRouteSegment } from '@/utils/api';
+import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
 
 const {
   defaultStart,
@@ -16,8 +18,9 @@ const {
 const origin = ref(defaultStart);
 const destination = ref(defaultEnd);
 const selectedSegment = ref<SafeRouteSegment | null>(null);
-const currentMapEmbed = ref(mapEmbedUrl);
-const userCoords = ref<{ lat: number; lng: number } | null>(null);
+const defaultSafeCenter: LatLng = { lat: 25.0375198, lng: 121.5636796 };
+const userCoords = ref<LatLng | null>(null);
+const mapCenter = ref<LatLng>(defaultSafeCenter);
 const isLocating = ref(false);
 const locationError = ref<string | null>(null);
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
@@ -66,6 +69,21 @@ const locationLabel = computed(() => {
   return `緯度 ${userCoords.value.lat.toFixed(5)}、經度 ${userCoords.value.lng.toFixed(5)}`;
 });
 
+const safeMapMarkers = computed<MapMarkerDescriptor[]>(() => {
+  if (!userCoords.value) {
+    return [];
+  }
+  return [
+    {
+      id: 'safe-user',
+      position: userCoords.value,
+      color: '#1F8A70',
+      label: '目前定位',
+      zIndex: 10
+    }
+  ];
+});
+
 const requestUserLocation = () => {
   if (!canUseGeolocation || typeof navigator === 'undefined') {
     locationError.value = '此裝置不支援定位功能';
@@ -76,8 +94,9 @@ const requestUserLocation = () => {
   navigator.geolocation.getCurrentPosition(
     (position) => {
       const { latitude, longitude } = position.coords;
-      userCoords.value = { lat: latitude, lng: longitude };
-      currentMapEmbed.value = getMapEmbedUrlFromCoords(latitude, longitude);
+      const coords = { lat: latitude, lng: longitude };
+      userCoords.value = coords;
+      mapCenter.value = coords;
       isLocating.value = false;
     },
     (error) => {
@@ -162,14 +181,7 @@ const requestUserLocation = () => {
       <!-- 路線規劃地圖區 -->
       <section class="rounded-3xl border border-grey-100 shadow-lg overflow-hidden">
         <div class="map-embed map-embed--tall h-full min-h-[360px]">
-          <iframe
-            :src="currentMapEmbed"
-            title="Safe navigation map"
-            loading="lazy"
-            allowfullscreen
-            referrerpolicy="no-referrer-when-downgrade"
-            class="absolute inset-0 h-full w-full"
-          ></iframe>
+          <GoogleMap :center="mapCenter" :markers="safeMapMarkers" :zoom="14" />
           <div class="map-embed__badge">導航預覽</div>
           <div class="map-embed__actions">
             <button

@@ -3,6 +3,7 @@ import { computed, onActivated, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import BottomNav from '@/components/BottomNav.vue';
 import WindIcon from '@/assets/navicons/Wind.png';
+import GoogleMap from '@/components/common/GoogleMap.vue';
 import {
   fetchPoliceNews,
   getHomeOverview,
@@ -18,6 +19,7 @@ import {
   type WindInfo,
   type FutureWindEntry
 } from '@/utils/api';
+import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
 
 const router = useRouter();
 
@@ -72,7 +74,23 @@ const locationLabel = ref(location);
 const isLocating = ref(false);
 const locationError = ref<string | null>(null);
 const userCoords = ref<{ lat: number; lng: number } | null>(null);
+const defaultHomeCenter: LatLng = { lat: 25.033964, lng: 121.564468 };
+const mapCenter = ref<LatLng>(defaultHomeCenter);
 const mapEmbedUrl = ref(googleMapEmbed);
+const homeMapMarkers = computed<MapMarkerDescriptor[]>(() => {
+  if (!userCoords.value) {
+    return [];
+  }
+  return [
+    {
+      id: 'home-user-location',
+      position: userCoords.value,
+      color: '#1F8A70',
+      label: '目前定位',
+      zIndex: 10
+    }
+  ];
+});
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
 const hasAutoRequestedLocation = ref(false);
 
@@ -301,6 +319,7 @@ const isCoordinateLabel = (value?: string | null) => {
 
 const updateLocationByCoords = async (lat: number, lng: number) => {
   userCoords.value = { lat, lng };
+  mapCenter.value = { lat, lng };
   mapEmbedUrl.value = getMapEmbedUrlFromCoords(lat, lng);
   const address = await reverseGeocode(lat, lng);
   if (address && !isCoordinateLabel(address)) {
@@ -497,11 +516,23 @@ onActivated(() => {
             </p>
           </div>
           <button
-            class="rounded-full border border-primary-500 px-6 py-1.5 text-xs font-semibold text-primary-500 shadow-sm"
+            class="flex h-9 w-9 items-center justify-center rounded-full border border-primary-200 text-primary-500 shadow-sm"
             @click="requestUserLocation"
             :disabled="isLocating"
+            aria-label="更新定位"
           >
-            {{ isLocating ? '定位中...' : '更新定位' }}
+            <svg
+              class="h-5 w-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 12a9 9 0 1 1-9-9" />
+              <path d="M21 3v6h-6" />
+            </svg>
           </button>
         </div>
         <p class="mt-2 text-xs text-grey-400">
@@ -594,14 +625,7 @@ onActivated(() => {
         </div>
         <div class="route-card flex flex-col gap-3 rounded-2xl bg-gradient-to-br from-primary-100 to-blue-100 p-3">
           <div class="map-embed map-embed--compact">
-            <iframe
-              :src="mapEmbedUrl"
-              title="Google Maps"
-              class="map-embed__iframe"
-              loading="lazy"
-              allowfullscreen
-              referrerpolicy="no-referrer-when-downgrade"
-            ></iframe>
+            <GoogleMap :center="mapCenter" :markers="homeMapMarkers" :zoom="15" />
             <div class="map-embed__badge">
               {{ mapPreview.road }}・{{ mapPreview.landmark }}
             </div>

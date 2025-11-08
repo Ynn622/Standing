@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import BottomNav from '@/components/BottomNav.vue';
+import GoogleMap from '@/components/common/GoogleMap.vue';
 import {
   getTrafficLayerPresets,
   getTrafficMapEmbedUrl,
@@ -9,14 +10,16 @@ import {
   getMapEmbedUrlFromCoords
 } from '@/utils/api';
 import type { TrafficTab } from '@/utils/api';
+import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
 
 const router = useRouter();
 
 const filters = getTrafficTabs();
 const layerPresets = getTrafficLayerPresets();
+const defaultTrafficCenter: LatLng = { lat: 25.045193, lng: 121.541269 };
 const mapEmbedUrl = getTrafficMapEmbedUrl();
-const currentMapEmbed = ref(mapEmbedUrl);
-const userCoords = ref<{ lat: number; lng: number } | null>(null);
+const mapCenter = ref<LatLng>(defaultTrafficCenter);
+const userCoords = ref<LatLng | null>(null);
 const isLocating = ref(false);
 const locationError = ref<string | null>(null);
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
@@ -105,8 +108,9 @@ const requestUserLocation = () => {
   navigator.geolocation.getCurrentPosition(
     (position) => {
       const { latitude, longitude } = position.coords;
-      userCoords.value = { lat: latitude, lng: longitude };
-      currentMapEmbed.value = getMapEmbedUrlFromCoords(latitude, longitude);
+      const coords = { lat: latitude, lng: longitude };
+      userCoords.value = coords;
+      mapCenter.value = coords;
       isLocating.value = false;
     },
     (error) => {
@@ -128,6 +132,21 @@ const requestUserLocation = () => {
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
   );
 };
+
+const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
+  if (!userCoords.value) {
+    return [];
+  }
+  return [
+    {
+      id: 'traffic-user',
+      position: userCoords.value,
+      color: '#1F8A70',
+      label: '目前位置',
+      zIndex: 10
+    }
+  ];
+});
 </script>
 
 <template>
@@ -170,14 +189,7 @@ const requestUserLocation = () => {
       <!-- 地圖顯示區 -->
       <section class="flex-1 rounded-3xl border border-grey-100 shadow-lg overflow-hidden">
         <div class="map-embed map-embed--tall h-full min-h-[360px]">
-          <iframe
-            :src="currentMapEmbed"
-            title="Taipei live traffic map"
-            loading="lazy"
-            allowfullscreen
-            referrerpolicy="no-referrer-when-downgrade"
-            class="absolute inset-0 h-full w-full"
-          ></iframe>
+          <GoogleMap :center="mapCenter" :markers="trafficMapMarkers" :zoom="14" />
           <div class="map-embed__badge">即時路況</div>
           <div class="map-embed__actions">
             <button

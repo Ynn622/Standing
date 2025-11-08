@@ -1,3 +1,5 @@
+import { loadGoogleMaps } from '@/composables/useGoogleMapsLoader';
+
 const {
   VITE_GOOGLE_MAPS_API_KEY,
   VITE_GOOGLE_MAPS_EMBED_HOME,
@@ -53,6 +55,9 @@ const POLICE_NEWS_ENDPOINT = 'https://ynn22-standing-backend.hf.space/news/polic
 const WIND_STATION_ENDPOINT = 'https://ynn22-standing-backend.hf.space/wind/';
 const FUTURE_WIND_ENDPOINT = 'https://ynn22-standing-backend.hf.space/wind/future';
 const GOOGLE_GEOCODE_ENDPOINT = 'https://maps.googleapis.com/maps/api/geocode/json';
+const OBSTACLE_REPORT_ENDPOINT = 'https://ynn22-standing-backend.hf.space/issue/create';
+const OBSTACLE_ISSUE_LIST_ENDPOINT = 'https://ynn22-standing-backend.hf.space/issue/getByStatus';
+const OBSTACLE_ISSUE_STATUS_ENDPOINT = 'https://ynn22-standing-backend.hf.space/issue/update';
 
 type PoliceNewsRecord = {
   roadtype?: string;
@@ -283,6 +288,120 @@ export const getObstacleReportData = (): ObstacleReportData => ({
     { id: 'others', label: '其他情況', icon: '⚠️', color: '#5B8DEF' }
   ]
 });
+
+export interface SubmitObstaclePayload {
+  address: string;
+  obstacleType: string;
+  description: string;
+}
+
+export interface SubmitObstacleResult {
+  success: boolean;
+  message?: string;
+  raw?: unknown;
+}
+
+export type ObstacleIssueStatus = 'Unsolved' | 'Resolved' | 'InProgress';
+
+export interface ObstacleIssueRecord {
+  id: string;
+  address: string;
+  type: string;
+  description: string;
+  time: string;
+  status: ObstacleIssueStatus;
+}
+
+export const submitObstacleReport = async (
+  payload: SubmitObstaclePayload
+): Promise<SubmitObstacleResult> => {
+  const url = new URL(OBSTACLE_REPORT_ENDPOINT);
+  url.searchParams.set('address', payload.address);
+  url.searchParams.set('obstacle_type', payload.obstacleType);
+  url.searchParams.set('description', payload.description);
+  try {
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        accept: 'application/json'
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Obstacle report API failed: ${response.status}`);
+    }
+    let data: unknown = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    return {
+      success: true,
+      raw: data
+    };
+  } catch (error) {
+    console.warn('[API] submit obstacle report failed', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '無法送出障礙回報'
+    };
+  }
+};
+
+export const fetchObstacleIssuesByStatus = async (
+  status: ObstacleIssueStatus = 'Unsolved'
+): Promise<ObstacleIssueRecord[]> => {
+  const url = new URL(OBSTACLE_ISSUE_LIST_ENDPOINT);
+  url.searchParams.set('status', status);
+  try {
+    const response = await fetch(url.toString(), {
+      headers: {
+        accept: 'application/json'
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Issue list API failed: ${response.status}`);
+    }
+    const data = (await response.json()) as ObstacleIssueRecord[];
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.warn('[API] fetch obstacle issues failed', error);
+    return [];
+  }
+};
+
+export const updateObstacleIssueStatus = async (
+  id: string,
+  status: ObstacleIssueStatus
+): Promise<SubmitObstacleResult> => {
+  const url = new URL(OBSTACLE_ISSUE_STATUS_ENDPOINT);
+  url.searchParams.set('issue_id', id);
+  // url.searchParams.set('status', status);
+  try {
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        accept: 'application/json'
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Update issue status failed: ${response.status}`);
+    }
+    let data: unknown = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    return { success: true, raw: data };
+  } catch (error) {
+    console.warn('[API] update obstacle issue failed', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '無法更新障礙狀態'
+    };
+  }
+};
 
 export interface WindDetail {
   location: string;
@@ -604,5 +723,31 @@ export const reverseGeocode = async (lat: number, lng: number): Promise<string> 
   } catch (error) {
     console.warn('[API] reverse geocode failed', error);
     return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }
+};
+
+export const geocodeAddress = async (
+  address: string
+): Promise<google.maps.LatLngLiteral | null> => {
+  if (typeof window === 'undefined' || !address.trim()) {
+    return null;
+  }
+  try {
+    const googleMaps = await loadGoogleMaps();
+    const geocoder = new googleMaps.maps.Geocoder();
+
+    return await new Promise((resolve) => {
+      geocoder.geocode({ address }, (results, status) => {
+        if (status === 'OK' && results?.length && results[0].geometry?.location) {
+          const loc = results[0].geometry.location;
+          resolve({ lat: loc.lat(), lng: loc.lng() });
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  } catch (error) {
+    console.warn('[API] geocode address failed', error);
+    return null;
   }
 };

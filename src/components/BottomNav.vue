@@ -16,7 +16,14 @@ const navItems = [
 ];
 
 const navigateTo = (name: string) => {
-  router.push({ name });
+  if (route.name === name) {
+    return;
+  }
+  router.push({ name }).catch((error) => {
+    if (error?.name !== 'NavigationDuplicated') {
+      console.warn('[BottomNav] navigation failed', error);
+    }
+  });
 };
 </script>
 
@@ -26,6 +33,7 @@ const navigateTo = (name: string) => {
       <button
         v-for="item in navItems"
         :key="item.name"
+        type="button"
         @click="navigateTo(item.name)"
         class="flex flex-col items-center justify-center flex-1 h-full transition-colors duration-200 rounded-2xl mx-1"
         :class="{
