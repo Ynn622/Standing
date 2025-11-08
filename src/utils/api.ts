@@ -51,6 +51,7 @@ export interface NewsItem {
 
 const POLICE_NEWS_ENDPOINT = 'https://ynn22-standing-backend.hf.space/news/police_local';
 const WIND_STATION_ENDPOINT = 'https://ynn22-standing-backend.hf.space/wind/';
+const FUTURE_WIND_ENDPOINT = 'https://ynn22-standing-backend.hf.space/wind/future';
 const GOOGLE_GEOCODE_ENDPOINT = 'https://maps.googleapis.com/maps/api/geocode/json';
 
 type PoliceNewsRecord = {
@@ -321,6 +322,47 @@ export const getWindDetail = (): WindDetail => ({
   ]
 });
 
+type FutureWindSlotRaw = {
+  天氣預報?: string;
+  風向?: string;
+  '3小時降雨機率'?: string;
+  溫度?: string;
+  風速?: string;
+  天氣現象?: string;
+  相對濕度?: string;
+  體感溫度?: string;
+};
+
+type FutureWindDistrictRaw = {
+  經緯度?: {
+    緯度?: string;
+    經度?: string;
+    地理編碼?: string;
+  };
+  預報資料?: Record<string, FutureWindSlotRaw>;
+};
+
+export type FutureWindForecastRaw = Record<string, FutureWindDistrictRaw>;
+
+export interface FutureWindEntry {
+  timestamp: string;
+  displayTime: string;
+  label: string;
+  weather: string;
+  windDirection: string;
+  rainProbability: string;
+  temperature: string;
+  windSpeedText: string;
+  windSpeedValue: number;
+  humidity: string;
+  apparentTemperature: string;
+}
+
+export interface FutureWindForecast {
+  district: string;
+  entries: FutureWindEntry[];
+}
+
 export interface WindStation {
   station_name: string;
   station_id: string;
@@ -349,7 +391,7 @@ const normalizeWindDirection = (value?: string | null) => {
   return trimmed.includes('風') ? trimmed : `${trimmed}風`;
 };
 
-const mapSpeedToRisk = (speed: number) => {
+export const mapSpeedToRisk = (speed: number) => {
   if (speed < 4) {
     return { level: 1, label: '低風險' };
   }
@@ -432,6 +474,108 @@ export const buildWindReadingFromStation = (station: WindStation) => {
   };
 
   return { windInfo, detail };
+};
+
+const parseForecastDate = (key: string): Date | null => {
+  const cleaned = key.replace(/[^0-9T]/g, '');
+  if (!/^\d{8}T\d{6}$/.test(cleaned)) {
+    return null;
+  }
+  const year = Number(cleaned.slice(0, 4));
+  const month = Number(cleaned.slice(4, 6)) - 1;
+  const day = Number(cleaned.slice(6, 8));
+  const hour = Number(cleaned.slice(9, 11));
+  const minute = Number(cleaned.slice(11, 13));
+  const second = Number(cleaned.slice(13, 15));
+  const date = new Date(year, month, day, hour, minute, second);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatForecastLabel = (date: Date) => {
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  const hour = date.getHours().toString().padStart(2, '0');
+  return `${month}/${day} ${hour}:00`;
+};
+
+const extractWindSpeedValue = (text?: string) => {
+  if (!text) {
+    return 0;
+  }
+  const match = text.match(/(\d+(\.\d+)?)/);
+  return match ? Number(match[1]) : 0;
+};
+
+const normalizeDistrictKey = (value?: string | null) => {
+  if (!value) return undefined;
+  return value.replace('台', '臺').trim();
+};
+
+export const fetchFutureWindForecast = async (): Promise<FutureWindForecastRaw> => {
+  const response = await fetch(FUTURE_WIND_ENDPOINT);
+  if (!response.ok) {
+    throw new Error('無法取得未來風況資料');
+  }
+  return response.json();
+};
+
+export const extractFutureWindForecast = (
+  raw: FutureWindForecastRaw,
+  districtHint?: string,
+  hoursLimit = 48
+): FutureWindForecast | null => {
+  const normalizedHint = normalizeDistrictKey(districtHint);
+  const availableKeys = Object.keys(raw);
+  if (!availableKeys.length) {
+    return null;
+  }
+  const districtKey =
+    availableKeys.find((key) => normalizeDistrictKey(key) === normalizedHint) || availableKeys[0];
+
+  const districtData = raw[districtKey];
+  if (!districtData?.預報資料) {
+    return null;
+  }
+
+  const now = new Date();
+  const upperBound = new Date(now.getTime() + hoursLimit * 60 * 60 * 1000);
+
+  const rawEntries = Object.entries(districtData.預報資料 ?? {})
+    .map(([timeKey, payload]) => {
+      const slot = payload ?? {};
+      const date = parseForecastDate(timeKey);
+      if (!date || date < now || date > upperBound) {
+        return null;
+      }
+      const displayTime = formatForecastLabel(date);
+      return {
+        timestamp: date.toISOString(),
+        displayTime,
+        label: displayTime,
+        weather: slot.天氣預報 ?? '天氣資訊更新中',
+        windDirection: normalizeWindDirection(slot.風向),
+        rainProbability: slot['3小時降雨機率'] ?? '--',
+        temperature: slot.溫度 ?? '--',
+        windSpeedText: slot.風速 ?? '--',
+        windSpeedValue: extractWindSpeedValue(slot.風速),
+        humidity: slot.相對濕度 ?? '--',
+        apparentTemperature: slot.體感溫度 ?? '--'
+      } satisfies FutureWindEntry;
+    })
+    .filter((entry): entry is FutureWindEntry => Boolean(entry))
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  const maxEntries = Math.max(16, Math.floor(hoursLimit / 3));
+  const entries = rawEntries.slice(0, maxEntries);
+
+  if (!entries.length) {
+    return null;
+  }
+
+  return {
+    district: districtKey,
+    entries
+  };
 };
 
 export const getMapEmbedUrlFromCoords = (lat: number, lng: number): string => {

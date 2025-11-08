@@ -7,14 +7,16 @@ import {
   fetchPoliceNews,
   getHomeOverview,
   getMapEmbedUrlFromCoords,
-  getWindDetail,
   reverseGeocode,
   fetchWindStations,
   pickNearestStation,
   buildWindReadingFromStation,
+  fetchFutureWindForecast,
+  extractFutureWindForecast,
+  mapSpeedToRisk,
   type WindStation,
   type WindInfo,
-  type WindDetail
+  type FutureWindEntry
 } from '@/utils/api';
 
 const router = useRouter();
@@ -77,23 +79,10 @@ const navigateTo = (routeName: string) => {
   router.push({ name: routeName });
 };
 
-const baseWindDetail = getWindDetail();
-const windDetail = ref<WindDetail>({ ...baseWindDetail });
-const placeholderWindDetail: WindDetail = {
-  ...baseWindDetail,
-  location: '資料更新中',
-  windSpeed: 0,
-  updatedAt: '',
-  source: '資料來源：更新中',
-  avgWind: 0,
-  direction: '風向更新中',
-  riskLevel: 0,
-  riskLabel: '風險評估中'
-};
 const isWindModalOpen = ref(false);
 const isNewsModalOpen = ref(false);
 const isRefreshingWind = ref(false);
-const lastUpdated = ref(new Date(windDetail.value.updatedAt));
+const lastUpdated = ref(new Date());
 const isNewsLoading = ref(false);
 const newsError = ref<string | null>(null);
 const windStations = ref<WindStation[]>([]);
@@ -101,31 +90,27 @@ const isWindStationLoading = ref(false);
 const windStationError = ref<string | null>(null);
 const nearestStation = ref<WindStation | null>(null);
 const isWindDataReady = computed(() => Boolean(windInfo.value));
-
-const windDetailDisplay = computed<WindDetail>(() => {
-  if (!isWindDataReady.value) {
-    return placeholderWindDetail;
-  }
-  return {
-    ...windDetail.value,
-    direction: ensureWindDirectionWord(windDetail.value.direction)
-  };
-});
-
-const formatTime = (date: Date) =>
-  `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-
-const formattedUpdatedAt = computed(() =>
-  isWindDataReady.value ? formatTime(lastUpdated.value) : '更新中'
+const futureForecastEntries = ref<FutureWindEntry[]>([]);
+const futureForecastDistrict = ref('');
+const isFutureForecastLoading = ref(false);
+const futureForecastError = ref<string | null>(null);
+const futureSourceLabel = computed(() =>
+  futureForecastDistrict.value ? `資料來源：${futureForecastDistrict.value} 預報` : '資料來源：更新中'
 );
+
+const selectedForecastEntry = computed(() => futureForecastEntries.value[0] ?? null);
+const forecastRisk = computed(() => mapSpeedToRisk(selectedForecastEntry.value?.windSpeedValue ?? 0));
+
+const formattedUpdatedAt = computed(() => selectedForecastEntry.value?.displayTime ?? '更新中');
 
 const isWindStale = computed(
   () => Date.now() - lastUpdated.value.getTime() > 10 * 60 * 1000
 );
 
 const riskSegments = computed(() =>
-  Array.from({ length: 5 }).map((_, index) => index < windDetailDisplay.value.riskLevel)
+  Array.from({ length: 5 }).map((_, index) => index < forecastRisk.value.level)
 );
+const forecastRiskLabel = computed(() => forecastRisk.value.label);
 
 const windIntensitySegments = computed(() => {
   const segments = 5;
@@ -186,39 +171,55 @@ const chartWidth = 320;
 const chartHeight = 140;
 const chartPadding = 12;
 
-const windTrendPoints = computed(() => {
-  const points = windDetail.value.trend;
-  if (!points.length) {
+const formatChartLabel = (entry: FutureWindEntry) => {
+  const date = new Date(entry.timestamp);
+  const hour = date.getHours().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return {
+    time: `${hour}:00`,
+    date: `${month}/${day}`
+  };
+};
+
+const forecastChartEntries = computed(() => {
+  const limitMs = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const withinRange = futureForecastEntries.value.filter((entry) => {
+    const time = new Date(entry.timestamp).getTime();
+    return time - now <= limitMs;
+  });
+  return withinRange.length ? withinRange : futureForecastEntries.value.slice(0, 8);
+});
+
+const forecastTrendPoints = computed(() => {
+  const entries = forecastChartEntries.value;
+  if (!entries.length) {
     return [];
   }
-  const hours = points.map(p => p.hour);
-  const values = points.map(p => p.value);
-  const maxValue = Math.max(...values);
-  const minValue = Math.min(...values);
-  const range = maxValue - minValue || 1;
-  return points.map((point, index) => {
+  const values = entries.map((entry) => entry.windSpeedValue);
+  const maxValue = Math.max(...values, 1);
+  return entries.map((entry, index) => {
     const x =
-      (index / (points.length - 1)) * (chartWidth - chartPadding * 2) + chartPadding;
-    const normalized = (point.value - minValue) / range;
-    const y =
-      chartPadding + (1 - normalized) * (chartHeight - chartPadding * 2);
+      (index / Math.max(entries.length - 1, 1)) * (chartWidth - chartPadding * 2) + chartPadding;
+    const normalized = entry.windSpeedValue / maxValue;
+    const y = chartPadding + (1 - normalized) * (chartHeight - chartPadding * 2);
+    const label = formatChartLabel(entry);
     return {
       x,
       y,
-      hour: point.hour,
-      value: point.value
+      label,
+      value: entry.windSpeedValue
     };
   });
 });
 
 const trendLinePath = computed(() => {
-  const points = windTrendPoints.value;
+  const points = forecastTrendPoints.value;
   if (!points.length) {
     return '';
   }
-  return points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`)
-    .join(' ');
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`).join(' ');
 });
 
 const refreshWindDetail = async () => {
@@ -380,6 +381,31 @@ const loadWindStations = async () => {
   }
 };
 
+const loadFutureForecastForTown = async (townHint?: string | null) => {
+  try {
+    isFutureForecastLoading.value = true;
+    futureForecastError.value = null;
+    const raw = await fetchFutureWindForecast();
+    const forecast = extractFutureWindForecast(raw, townHint ?? undefined);
+    if (forecast) {
+      futureForecastDistrict.value = forecast.district;
+      futureForecastEntries.value = forecast.entries;
+      lastUpdated.value = new Date();
+    } else {
+      futureForecastEntries.value = [];
+      futureForecastDistrict.value = '';
+      futureForecastError.value = '找不到對應預報資料';
+    }
+  } catch (error) {
+    console.warn('載入風況預報失敗', error);
+    futureForecastEntries.value = [];
+    futureForecastDistrict.value = '';
+    futureForecastError.value = '無法取得未來風況資料';
+  } finally {
+    isFutureForecastLoading.value = false;
+  }
+};
+
 const applyNearestStation = () => {
   if (!userCoords.value || !windStations.value.length) {
     return;
@@ -395,11 +421,8 @@ const applyNearestStation = () => {
   nearestStation.value = nearest.station;
   const reading = buildWindReadingFromStation(nearest.station);
   windInfo.value = reading.windInfo;
-  windDetail.value = {
-    ...windDetail.value,
-    ...reading.detail
-  };
-  lastUpdated.value = new Date(reading.detail.updatedAt ?? new Date().toISOString());
+  lastUpdated.value = new Date();
+  loadFutureForecastForTown(nearest.station.town);
 };
 
 const handleFabPointerDown = () => {
@@ -445,6 +468,7 @@ onMounted(() => {
   loadPoliceNews();
   requestUserLocation();
   loadWindStations();
+  loadFutureForecastForTown();
 });
 </script>
 
@@ -700,7 +724,7 @@ onMounted(() => {
       </div>
     </Transition>
 
-    <!-- 風況詳情 Modal -->
+    <!-- 未來 48 小時風況 Modal -->
     <Transition name="wind-modal">
       <div v-if="isWindModalOpen" class="wind-modal__overlay" @click.self="closeWindModal">
         <section class="wind-modal__panel" @click.stop>
@@ -709,84 +733,122 @@ onMounted(() => {
               <img :src="WindIcon" alt="風況 icon" class="h-8 w-8 object-contain" />
               <div>
                 <p class="text-xs uppercase tracking-[0.4em] text-primary-400">Wind</p>
-                <h2 class="text-xl font-bold text-grey-900">風況詳情</h2>
+                <h2 class="text-xl font-bold text-grey-900">風況情形預測</h2>
               </div>
             </div>
             <button class="wind-modal__close" @click="closeWindModal">✕</button>
           </header>
 
           <div class="wind-modal__body">
-            <section class="wind-modal__snapshot">
-              <div class="flex items-center gap-4">
-                <div class="rounded-full bg-primary-50 p-4 text-4xl">🌀</div>
-                <div>
-                  <p class="text-xs text-grey-500">{{ windDetailDisplay.source }}</p>
-                  <p class="text-xs text-grey-500">更新：{{ formattedUpdatedAt }}</p>
-                  <p class="mt-2 text-5xl font-bold text-grey-900">
-                    <template v-if="isWindDataReady">
-                      {{ windDetailDisplay.windSpeed.toFixed(1) }}
-                    </template>
-                    <template v-else>—</template>
-                    <span class="text-lg font-medium">{{ windDetailDisplay.unit }}</span>
-                  </p>
-                  <p class="text-sm font-semibold text-grey-700">{{ windDetailDisplay.location }}</p>
+            <div v-if="isFutureForecastLoading" class="wind-modal__state">預報資料更新中...</div>
+            <div v-else-if="futureForecastError" class="wind-modal__state">
+              {{ futureForecastError }}
+            </div>
+            <div v-else-if="!futureForecastEntries.length" class="wind-modal__state">
+              暫無預報資料
+            </div>
+            <template v-else>
+              <section class="wind-modal__snapshot">
+                <div class="flex items-center gap-4">
+                  <div class="rounded-full bg-primary-50 p-4 text-4xl">🌀</div>
+                  <div>
+                    <p class="text-xs text-grey-500">{{ futureSourceLabel }}</p>
+                    <p class="text-xs text-grey-500">最新時段：{{ formattedUpdatedAt }}</p>
+                    <p class="mt-2 text-5xl font-bold text-grey-900">
+                      {{ selectedForecastEntry?.windSpeedValue.toFixed(1) ?? '—' }}
+                      <span class="text-lg font-medium">m/s</span>
+                    </p>
+                    <p class="text-sm font-semibold text-grey-700">
+                      {{ futureForecastDistrict || nearestStation?.town || '位置更新中' }}
+                    </p>
+                    <p class="text-sm text-grey-600">
+                      {{ selectedForecastEntry?.weather ?? '天氣資訊更新中' }}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            <section class="wind-modal__table">
-              <div class="wind-info-row">
-                <span>最大風速</span>
-                <strong>{{ windDetailDisplay.maxWind.toFixed(1) }} {{ windDetailDisplay.unit }}</strong>
-              </div>
-              <div class="wind-info-row">
-                <span>平均風速</span>
-                <strong>
-                  <template v-if="isWindDataReady">
-                    {{ windDetailDisplay.avgWind.toFixed(1) }} {{ windDetailDisplay.unit }}
-                  </template>
-                  <template v-else>—</template>
-                </strong>
-              </div>
-              <div class="wind-info-row">
-                <span>風向</span>
-                <strong>{{ windDetailDisplay.direction }}</strong>
-              </div>
-              <div class="wind-info-row wind-info-row--risk">
-                <div>
-                  <span>風險等級</span>
-                  <p class="text-xs text-grey-500">{{ windDetailDisplay.riskLabel }}</p>
+              <section class="wind-modal__table">
+                <div class="wind-info-row">
+                  <span>天氣預報</span>
+                  <strong>{{ selectedForecastEntry?.weather ?? '—' }}</strong>
                 </div>
-                <div class="risk-bars">
-                  <span v-for="(filled, index) in riskSegments" :key="index" class="risk-bars__item"
-                    :class="{ 'risk-bars__item--active': filled }"></span>
+                <div class="wind-info-row">
+                  <span>風向</span>
+                  <strong>{{ selectedForecastEntry?.windDirection ?? '—' }}</strong>
                 </div>
-              </div>
-            </section>
+                <div class="wind-info-row">
+                  <span>風速</span>
+                  <strong>{{ selectedForecastEntry?.windSpeedText ?? '—' }}</strong>
+                </div>
+                <div class="wind-info-row">
+                  <span>3 小時降雨機率</span>
+                  <strong>{{ selectedForecastEntry?.rainProbability ?? '—' }}</strong>
+                </div>
+                <div class="wind-info-row">
+                  <span>溫度</span>
+                  <strong>{{ selectedForecastEntry?.temperature ?? '—' }}</strong>
+                </div>
+                <div class="wind-info-row">
+                  <span>體感溫度</span>
+                  <strong>{{ selectedForecastEntry?.apparentTemperature ?? '—' }}</strong>
+                </div>
+                <div class="wind-info-row">
+                  <span>相對濕度</span>
+                  <strong>{{ selectedForecastEntry?.humidity ?? '—' }}</strong>
+                </div>
+                <div class="wind-info-row wind-info-row--risk">
+                  <div>
+                    <span>風險等級</span>
+                    <p class="text-xs text-grey-500">{{ forecastRiskLabel }}</p>
+                  </div>
+                  <div class="risk-bars">
+                    <span v-for="(filled, index) in riskSegments" :key="index" class="risk-bars__item"
+                      :class="{ 'risk-bars__item--active': filled }"></span>
+                  </div>
+                </div>
+              </section>
 
-            <section class="wind-modal__chart">
-              <div class="flex items-center justify-between mb-2">
-                <h3 class="text-base font-semibold text-grey-900">風級趨勢圖（0-24 時）</h3>
-                <p class="text-xs text-grey-500">單位：{{ windDetailDisplay.unit }}</p>
-              </div>
-              <div class="trend-chart">
-                <svg :viewBox="`0 0 ${chartWidth} ${chartHeight}`" xmlns="http://www.w3.org/2000/svg">
-                  <line v-for="tick in 4" :key="tick" :x1="chartPadding" :x2="chartWidth - chartPadding"
-                    :y1="chartPadding + (tick * (chartHeight - chartPadding * 2)) / 4"
-                    :y2="chartPadding + (tick * (chartHeight - chartPadding * 2)) / 4" stroke="#E5E7EB" stroke-width="1"
-                    stroke-dasharray="4 6" />
-                  <path :d="trendLinePath" fill="none" stroke="#31949A" stroke-width="3" stroke-linecap="round"
-                    stroke-linejoin="round" />
-                  <circle v-for="(point, index) in windTrendPoints" :key="`dot-${index}`" :cx="point.x" :cy="point.y"
-                    r="4" fill="#fff" stroke="#31949A" stroke-width="2" />
-                </svg>
-                <div class="trend-chart__labels">
-                  <span v-for="(point, index) in windTrendPoints" :key="`label-${index}`">
-                    {{ point.hour }}
-                  </span>
+              <section class="wind-modal__chart">
+                <div class="mb-2 flex items-center justify-between">
+                  <h3 class="text-base font-semibold text-grey-900">風速趨勢圖（未來 24 小時）</h3>
+                  <p class="text-xs text-grey-500">單位：m/s</p>
                 </div>
-              </div>
-            </section>
+                <div class="trend-chart">
+                  <svg :viewBox="`0 0 ${chartWidth} ${chartHeight}`" xmlns="http://www.w3.org/2000/svg">
+                    <line v-for="tick in 4" :key="tick" :x1="chartPadding" :x2="chartWidth - chartPadding"
+                      :y1="chartPadding + (tick * (chartHeight - chartPadding * 2)) / 4"
+                      :y2="chartPadding + (tick * (chartHeight - chartPadding * 2)) / 4" stroke="#E5E7EB" stroke-width="1"
+                      stroke-dasharray="4 6" />
+                    <path :d="trendLinePath" fill="none" stroke="#31949A" stroke-width="3" stroke-linecap="round"
+                      stroke-linejoin="round" />
+                    <circle v-for="(point, index) in forecastTrendPoints" :key="`dot-${index}`" :cx="point.x"
+                      :cy="point.y" r="4" fill="#fff" stroke="#31949A" stroke-width="2" />
+                  </svg>
+                  <div
+                    class="trend-chart__labels"
+                    :style="{ gridTemplateColumns: `repeat(${forecastTrendPoints.length}, minmax(0, 1fr))` }"
+                  >
+                    <span v-for="(point, index) in forecastTrendPoints" :key="`label-${index}`">
+                      <span class="trend-chart__label-time">{{ point.label.time }}</span>
+                      <span class="trend-chart__label-date">{{ point.label.date }}</span>
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="wind-modal__timeline">
+                <h3 class="text-base font-semibold text-grey-900">時段列表</h3>
+                <div class="wind-timeline">
+                  <div v-for="entry in futureForecastEntries" :key="entry.timestamp" class="wind-timeline__item">
+                    <p class="wind-timeline__time">{{ entry.displayTime }}</p>
+                    <p class="wind-timeline__speed">{{ entry.windSpeedValue.toFixed(1) }} m/s</p>
+                    <p class="wind-timeline__meta">{{ entry.windDirection }}</p>
+                    <p class="wind-timeline__rain">{{ entry.rainProbability }}</p>
+                  </div>
+                </div>
+              </section>
+            </template>
           </div>
         </section>
       </div>
@@ -941,6 +1003,15 @@ onMounted(() => {
   display: none;
 }
 
+.wind-modal__state {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  color: #6b7280;
+}
+
 .wind-modal__snapshot {
   margin-bottom: 1.5rem;
 }
@@ -992,11 +1063,77 @@ onMounted(() => {
 
 .trend-chart__labels {
   display: grid;
-  grid-template-columns: repeat(9, 1fr);
+  gap: 0.4rem;
   font-size: 0.7rem;
   color: #6b7280;
   margin-top: 0.5rem;
   text-align: center;
+}
+
+.trend-chart__labels span {
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-weight: 600;
+}
+
+.trend-chart__label-time {
+  font-size: 0.75rem;
+  color: #0f172a;
+}
+
+.trend-chart__label-date {
+  font-size: 0.65rem;
+  color: #6b7280;
+}
+
+.wind-modal__timeline {
+  margin-top: 1.5rem;
+}
+
+.wind-timeline {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-right: 0.5rem;
+}
+
+.wind-timeline::-webkit-scrollbar {
+  width: 4px;
+}
+
+.wind-timeline::-webkit-scrollbar-thumb {
+  background: #cbd5f5;
+  border-radius: 999px;
+}
+
+.wind-timeline__item {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 0.85rem;
+  background: #f8fafa;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+.wind-timeline__time {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.wind-timeline__speed {
+  font-weight: 600;
+  color: #31949a;
+}
+
+.wind-timeline__rain {
+  text-align: right;
+  color: #6b7280;
 }
 
 .wind-modal-enter-active,
