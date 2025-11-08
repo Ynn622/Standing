@@ -4,7 +4,7 @@ import BottomNav from '@/components/BottomNav.vue';
 import Input from '@/components/base/Input.vue';
 import Button from '@/components/base/Button.vue';
 import GoogleMap from '@/components/common/GoogleMap.vue';
-import { getSafeNavigationData } from '@/utils/api';
+import { geocodeAddress, getSafeNavigationData } from '@/utils/api';
 import type { SafeRouteSegment } from '@/utils/api';
 import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
 
@@ -17,6 +17,8 @@ const {
 
 const origin = ref(defaultStart);
 const destination = ref(defaultEnd);
+const originCoords = ref<LatLng | null>(null);
+const destinationCoords = ref<LatLng | null>(null);
 const selectedSegment = ref<SafeRouteSegment | null>(null);
 const defaultSafeCenter: LatLng = { lat: 25.0375198, lng: 121.5636796 };
 const userCoords = ref<LatLng | null>(null);
@@ -24,13 +26,22 @@ const mapCenter = ref<LatLng>(defaultSafeCenter);
 const isLocating = ref(false);
 const locationError = ref<string | null>(null);
 const canUseGeolocation = typeof window !== 'undefined' && 'geolocation' in navigator;
+const isOriginGeocoding = ref(false);
+const isDestinationGeocoding = ref(false);
+const originMarkerHint = ref('尚未標記出發點');
+const destinationMarkerHint = ref('尚未標記目的地');
+const isSegmentModalOpen = ref(false);
 
 const canNavigate = computed(() => Boolean(origin.value && destination.value));
 
 const resetNavigation = () => {
   origin.value = '';
   destination.value = '';
+  originCoords.value = null;
+  destinationCoords.value = null;
   selectedSegment.value = null;
+  originMarkerHint.value = '尚未標記出發點';
+  destinationMarkerHint.value = '尚未標記目的地';
 };
 
 const startNavigation = () => {
@@ -43,6 +54,14 @@ const startNavigation = () => {
 
 const selectSegment = (segment: SafeRouteSegment) => {
   selectedSegment.value = segment;
+};
+
+const openSegmentModal = () => {
+  isSegmentModalOpen.value = true;
+};
+
+const closeSegmentModal = () => {
+  isSegmentModalOpen.value = false;
 };
 
 const getWindSegments = (speed: number) => {
@@ -70,19 +89,67 @@ const locationLabel = computed(() => {
 });
 
 const safeMapMarkers = computed<MapMarkerDescriptor[]>(() => {
-  if (!userCoords.value) {
-    return [];
+  const markers: MapMarkerDescriptor[] = [];
+  if (originCoords.value) {
+    markers.push({
+      id: 'safe-origin',
+      position: originCoords.value,
+      color: '#0EA5E9',
+      label: '出發點',
+      zIndex: 20
+    });
   }
-  return [
-    {
+  if (destinationCoords.value) {
+    markers.push({
+      id: 'safe-destination',
+      position: destinationCoords.value,
+      color: '#2DD4BF',
+      label: '目的地',
+      zIndex: 20
+    });
+  }
+  if (userCoords.value) {
+    markers.push({
       id: 'safe-user',
       position: userCoords.value,
       color: '#1F8A70',
       label: '目前定位',
-      zIndex: 10
-    }
-  ];
+      zIndex: 30
+    });
+  }
+  return markers;
 });
+
+const applyMarkerFromInput = async (type: 'origin' | 'destination') => {
+  const targetValue = type === 'origin' ? origin.value.trim() : destination.value.trim();
+  if (!targetValue) {
+    if (type === 'origin') {
+      originMarkerHint.value = '請先輸入出發點';
+    } else {
+      destinationMarkerHint.value = '請先輸入目的地';
+    }
+    return;
+  }
+
+  const loadingRef = type === 'origin' ? isOriginGeocoding : isDestinationGeocoding;
+  const hintRef = type === 'origin' ? originMarkerHint : destinationMarkerHint;
+  const coordRef = type === 'origin' ? originCoords : destinationCoords;
+
+  loadingRef.value = true;
+  hintRef.value = '定位中...';
+
+  const coords = await geocodeAddress(targetValue);
+  loadingRef.value = false;
+
+  if (!coords) {
+    hintRef.value = '無法標記，請確認地址';
+    return;
+  }
+
+  coordRef.value = coords;
+  mapCenter.value = coords;
+  hintRef.value = `已標記：${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
+};
 
 const requestUserLocation = () => {
   if (!canUseGeolocation || typeof navigator === 'undefined') {
@@ -121,61 +188,69 @@ const requestUserLocation = () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-white pb-24">
+  <div class="safe-nav-page min-h-screen bg-white pb-24" :class="{ 'modal-open': isSegmentModalOpen }">
     <main class="mx-auto flex max-w-5xl flex-col gap-4 px-4 pt-6">
       <!--  輸入區 -->
       <section class="rounded-2xl border border-grey-100 px-4 py-4 shadow-sm">
-        <div class="space-y-4">
-          <label class="flex items-center gap-3 rounded-xl border border-grey-200 px-4 py-3">
-            <span class="text-2xl text-primary-500">📍</span>
-            <Input
-              v-model="origin"
-              placeholder="輸入出發點"
-              class="w-full border-0 bg-transparent p-0 text-base text-grey-900 focus:ring-0"
-            />
-          </label>
-          <label class="flex items-center gap-3 rounded-xl border border-grey-200 px-4 py-3">
-            <span class="text-2xl text-primary-500">🎯</span>
-            <Input
-              v-model="destination"
-              placeholder="輸入目的地"
-              class="w-full border-0 bg-transparent p-0 text-base text-grey-900 focus:ring-0"
-            />
-          </label>
+        <div class="space-y-5">
+          <div>
+            <label class="flex items-center gap-3 rounded-xl border border-grey-200 px-4 py-3">
+              <span class="text-2xl text-primary-500">📍</span>
+              <div class="flex w-full items-center gap-3">
+                <Input
+                  v-model="origin"
+                  placeholder="輸入出發點"
+                  class="w-full border-0 bg-transparent p-0 text-base text-grey-900 focus:ring-0"
+                />
+                <button
+                  type="button"
+                  class="marker-btn"
+                  :disabled="isOriginGeocoding"
+                  @click="applyMarkerFromInput('origin')"
+                >
+                  {{ isOriginGeocoding ? '定位中' : '標記' }}
+                </button>
+              </div>
+            </label>
+            <p class="marker-hint">{{ originMarkerHint }}</p>
+          </div>
+          <div>
+            <label class="flex items-center gap-3 rounded-xl border border-grey-200 px-4 py-3">
+              <span class="text-2xl text-primary-500">🎯</span>
+              <div class="flex w-full items-center gap-3">
+                <Input
+                  v-model="destination"
+                  placeholder="輸入目的地"
+                  class="w-full border-0 bg-transparent p-0 text-base text-grey-900 focus:ring-0"
+                />
+                <button
+                  type="button"
+                  class="marker-btn"
+                  :disabled="isDestinationGeocoding"
+                  @click="applyMarkerFromInput('destination')"
+                >
+                  {{ isDestinationGeocoding ? '定位中' : '標記' }}
+                </button>
+              </div>
+            </label>
+            <p class="marker-hint">{{ destinationMarkerHint }}</p>
+          </div>
         </div>
       </section>
 
-      <!-- 迴避路徑建議區 -->
-      <section class="rounded-2xl border border-grey-100 px-4 py-4 shadow-sm">
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-lg font-bold text-grey-900">建議路段風速</h2>
-          <p class="text-xs text-grey-500">長按路段可在地圖中高亮</p>
+      <section class="segment-summary rounded-2xl border border-grey-100 px-4 py-4 shadow-sm">
+        <div>
+          <p class="segment-summary__eyebrow">避開高風速</p>
+          <p class="segment-summary__title">
+            {{ selectedSegment ? selectedSegment.name : '尚未選取路段' }}
+          </p>
+          <p class="segment-summary__hint">
+            {{ selectedSegment ? selectedSegment.note : `共有 ${segments.length} 段建議，點擊查看清單` }}
+          </p>
         </div>
-        <div class="max-h-48 space-y-3 overflow-y-auto pr-2">
-          <button
-            v-for="segment in segments"
-            :key="segment.id"
-            class="w-full rounded-2xl border px-3 py-3 text-left transition hover:border-primary-300"
-            :class="selectedSegment?.id === segment.id ? 'border-primary-500 bg-[#E6F1F2]' : 'border-grey-100 bg-white'"
-            @click="selectSegment(segment)"
-          >
-            <div class="flex items-center justify-between">
-              <p class="text-sm font-semibold text-grey-800">{{ segment.name }}</p>
-              <span class="text-sm font-bold text-primary-600">
-                {{ segment.windSpeed.toFixed(1) }} m/s
-              </span>
-            </div>
-            <div class="segment-track mt-2">
-              <span
-                v-for="(active, index) in getWindSegments(segment.windSpeed)"
-                :key="`${segment.id}-meter-${index}`"
-                class="segment-track__item"
-                :class="{ 'segment-track__item--active': active }"
-              ></span>
-            </div>
-            <p class="mt-2 text-xs text-grey-500">{{ segment.note }}</p>
-          </button>
-        </div>
+        <button type="button" class="segment-summary__action" @click="openSegmentModal">
+          查看建議
+        </button>
       </section>
 
       <!-- 路線規劃地圖區 -->
@@ -248,6 +323,46 @@ const requestUserLocation = () => {
       </section>
     </main>
 
+    <Transition name="segment-modal">
+      <div v-if="isSegmentModalOpen" class="segment-modal__overlay" @click.self="closeSegmentModal">
+        <section class="segment-modal__panel" @click.stop>
+          <header class="segment-modal__header">
+            <div>
+              <p class="segment-modal__eyebrow">建議路段風速</p>
+              <h3 class="segment-modal__title">避開高風速路段清單</h3>
+            </div>
+            <button type="button" class="segment-modal__close" @click="closeSegmentModal">✕</button>
+          </header>
+          <div class="segment-modal__body">
+            <p class="segment-modal__intro">
+              共 {{ segments.length }} 段建議。點擊任一路段即可同步更新地圖浮層並鎖定對應提示。
+            </p>
+            <button
+              v-for="segment in segments"
+              :key="segment.id"
+              class="segment-modal__item"
+              :class="{ 'segment-modal__item--active': selectedSegment?.id === segment.id }"
+              @click="selectSegment(segment)"
+            >
+              <div class="segment-modal__item-head">
+                <p class="segment-modal__item-name">{{ segment.name }}</p>
+                <span class="segment-modal__item-speed">{{ segment.windSpeed.toFixed(1) }} m/s</span>
+              </div>
+              <div class="segment-track mt-2">
+                <span
+                  v-for="(active, index) in getWindSegments(segment.windSpeed)"
+                  :key="`${segment.id}-modal-meter-${index}`"
+                  class="segment-track__item"
+                  :class="{ 'segment-track__item--active': active }"
+                ></span>
+              </div>
+              <p class="segment-modal__item-note">{{ segment.note }}</p>
+            </button>
+          </div>
+        </section>
+      </div>
+    </Transition>
+
     <BottomNav />
   </div>
 </template>
@@ -256,5 +371,198 @@ const requestUserLocation = () => {
 label input:focus {
   outline: none;
   box-shadow: none;
+}
+
+.safe-nav-page.modal-open {
+  overflow: hidden;
+}
+
+.marker-btn {
+  padding: 0.35rem 0.95rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid #62a3a6;
+  color: #fff;
+  background: linear-gradient(90deg, #62a3a6, #7bc3c5);
+  transition: opacity 0.2s ease;
+  cursor: pointer;
+}
+
+.marker-btn:disabled {
+  opacity: 0.6;
+}
+
+.marker-hint {
+  margin-top: 0.35rem;
+  padding-left: 2.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.segment-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.25rem;
+  background: #f3fbfb;
+}
+
+.segment-summary__eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.segment-summary__title {
+  margin-top: 0.25rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.segment-summary__hint {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.segment-summary__action {
+  align-self: center;
+  padding: 0.65rem 1.4rem;
+  border-radius: 999px;
+  border: none;
+  background: #62a3a6;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  box-shadow: 0 8px 22px rgba(98, 163, 166, 0.25);
+  cursor: pointer;
+}
+
+.segment-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 2rem 1rem 1rem;
+  z-index: 90;
+}
+
+.segment-modal__panel {
+  width: 100%;
+  max-width: 32rem;
+  background: #fff;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -12px 40px rgba(15, 23, 42, 0.25);
+  max-height: calc(100vh - 5rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.segment-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.2rem 1.5rem 0.5rem;
+}
+
+.segment-modal__eyebrow {
+  font-size: 0.75rem;
+  color: #64748b;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+}
+
+.segment-modal__title {
+  margin-top: 0.35rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.segment-modal__close {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 1.1rem;
+  display: grid;
+  place-items: center;
+  color: #475569;
+  cursor: pointer;
+}
+
+.segment-modal__body {
+  padding: 0.5rem 1.5rem 1.5rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 10rem);
+}
+
+.segment-modal__intro {
+  font-size: 0.85rem;
+  color: #475569;
+  margin-bottom: 0.75rem;
+}
+
+.segment-modal__item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  border-radius: 1.25rem;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  transition: border 0.2s ease, background 0.2s ease;
+  display: block;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+}
+
+.segment-modal__item:last-child {
+  margin-bottom: 0;
+}
+
+.segment-modal__item--active {
+  border-color: #62a3a6;
+  background: #e6f1f2;
+}
+
+.segment-modal__item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.segment-modal__item-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.segment-modal__item-speed {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #047857;
+}
+
+.segment-modal__item-note {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.segment-modal-enter-active,
+.segment-modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.segment-modal-enter-from,
+.segment-modal-leave-to {
+  opacity: 0;
 }
 </style>

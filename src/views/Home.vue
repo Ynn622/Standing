@@ -531,7 +531,8 @@ onActivated(() => {
               stroke-linejoin="round"
             >
               <path d="M21 12a9 9 0 1 1-9-9" />
-              <path d="M21 3v6h-6" />
+              <path d="M16 6h5v5" />
+              <path d="m21 6-4 4" />
             </svg>
           </button>
         </div>

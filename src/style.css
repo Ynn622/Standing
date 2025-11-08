@@ -43,6 +43,21 @@ button {
   font: inherit;
 }
 
+.app-shell {
+  min-height: 100vh;
+}
+
+.page-slide-enter-active,
+.page-slide-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.page-slide-enter-from,
+.page-slide-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
+}
+
 .segment-track {
   display: flex;
   gap: 0.35rem;

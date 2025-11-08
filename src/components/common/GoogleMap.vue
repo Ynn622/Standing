@@ -48,34 +48,69 @@ let googleInstance: typeof google | null = null;
 const toLiteral = (value: LatLng): google.maps.LatLngLiteral => ({ lat: value.lat, lng: value.lng });
 
 const buildMarkerContent = (descriptor: MapMarkerDescriptor): HTMLElement => {
+  const labelText = descriptor.label;
+  if (googleInstance?.maps.marker?.PinElement) {
+    const pin = new googleInstance.maps.marker.PinElement({
+      background: descriptor.color ?? '#2563eb',
+      borderColor: '#ffffff',
+      glyphColor: '#ffffff',
+      scale: 1
+    });
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.display = 'inline-flex';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.justifyContent = 'center';
+    wrapper.style.flexDirection = 'column';
+    wrapper.appendChild(pin.element);
+
+    if (labelText) {
+      const label = document.createElement('span');
+      label.textContent = labelText;
+      label.style.position = 'absolute';
+      label.style.bottom = 'calc(100% + 6px)';
+      label.style.left = '50%';
+      label.style.transform = 'translateX(-50%)';
+      label.style.background = 'rgba(255,255,255,0.94)';
+      label.style.color = '#111';
+      label.style.fontSize = '11px';
+      label.style.fontWeight = '600';
+      label.style.padding = '2px 10px';
+      label.style.borderRadius = '999px';
+      label.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.12)';
+      wrapper.appendChild(label);
+    }
+
+    return wrapper;
+  }
+
   const wrapper = document.createElement('div');
-  wrapper.style.display = 'flex';
+  wrapper.style.position = 'relative';
+  wrapper.style.display = 'inline-flex';
   wrapper.style.flexDirection = 'column';
   wrapper.style.alignItems = 'center';
-  wrapper.style.gap = '4px';
   wrapper.style.transform = 'translate(-50%, -100%)';
 
   const pin = document.createElement('div');
-  pin.style.width = '16px';
-  pin.style.height = '16px';
-  pin.style.borderRadius = '999px 999px 999px 0';
-  pin.style.transform = 'rotate(-45deg)';
+  pin.style.width = '18px';
+  pin.style.height = '18px';
+  pin.style.borderRadius = '50%';
   pin.style.background = descriptor.color ?? '#2563eb';
   pin.style.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
   pin.style.border = '2px solid #fff';
   wrapper.appendChild(pin);
 
-  if (descriptor.label) {
+  if (labelText) {
     const label = document.createElement('span');
-    label.textContent = descriptor.label;
-    label.style.background = 'rgba(15,23,42,0.85)';
-    label.style.color = '#fff';
+    label.textContent = labelText;
+    label.style.marginTop = '4px';
+    label.style.background = 'rgba(255,255,255,0.94)';
+    label.style.color = '#111';
     label.style.fontSize = '11px';
     label.style.fontWeight = '600';
-    label.style.padding = '2px 8px';
+    label.style.padding = '2px 10px';
     label.style.borderRadius = '999px';
-    label.style.whiteSpace = 'nowrap';
-    label.style.boxShadow = '0 8px 18px rgba(15,23,42,0.3)';
+    label.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.12)';
     wrapper.appendChild(label);
   }
 

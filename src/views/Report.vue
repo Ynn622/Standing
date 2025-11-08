@@ -18,6 +18,7 @@ import {
 } from '@/utils/api';
 import type { ObstacleTypeOption, ObstacleIssueRecord } from '@/utils/api';
 import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
+import { useUserInfo } from '@/utils/global';
 
 const { obstacleTypes, mapEmbedUrl: defaultMapEmbed, helperText } = getObstacleReportData();
 
@@ -366,7 +367,6 @@ watch(
       <section class="rounded-3xl border border-grey-100 shadow-lg overflow-hidden">
         <div class="map-embed map-embed--tall h-full min-h-[360px]">
           <GoogleMap :center="mapCenter" :markers="mapMarkers" :zoom="15" @marker-click="handleMarkerClick" />
-          <div class="map-embed__badge">障礙定位</div>
           <div class="map-embed__actions">
             <button
               type="button"
@@ -488,7 +488,7 @@ watch(
                 @click="requestUserLocation"
                 :disabled="isLocating"
               >
-                {{ isLocating ? '定位中...' : '重新取得座標' }}
+                {{ isLocating ? '定位中...' : '重新取得位置' }}
               </button>
             </div>
             <input
@@ -506,7 +506,7 @@ watch(
             <div class="mb-3 flex items-center justify-between">
               <h2 class="text-lg font-bold text-grey-900">障礙類型</h2>
               <span class="text-xs font-semibold text-primary-500">
-                請選擇一種類型，資訊會同步到地圖圖層
+                請選擇一種類型
               </span>
             </div>
             <div class="type-scroll flex gap-3 overflow-x-auto pb-1">
@@ -550,9 +550,9 @@ watch(
               placeholder="請描述發生時間、影響範圍與目前狀態..."
             ></textarea>
             <p class="mt-2 text-xs text-grey-500">
-              完整描述有助於後端研判處理優先順序，亦可補充現場聯絡方式。
+              完整描述有助於研判處理順序，亦可補充現場聯絡方式。
             </p>
-            <p class="text-xs font-semibold text-primary-500">描述至少 8 個字才能送出。</p>
+            <p class="text-xs font-semibold text-red-500">描述至少 8 個字才能送出。</p>
           </div>
         </div>
       </section>
@@ -577,9 +577,6 @@ watch(
               {{ isSubmitting ? '送出中...' : '障礙回報' }}
             </Button>
           </div>
-          <p class="text-xs text-grey-500">
-            送出後將把資料同步給交通指揮中心，並於後台障礙清單建立紀錄。
-          </p>
         </div>
       </section>
     </main>

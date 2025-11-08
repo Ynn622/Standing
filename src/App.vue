@@ -1,5 +1,9 @@
 <script setup lang="ts"></script>
 
 <template>
-  <RouterView />
+  <div class="app-shell">
+    <Transition name="page-slide" mode="out-in">
+      <RouterView />
+    </Transition>
+  </div>
 </template>

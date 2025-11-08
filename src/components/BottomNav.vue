@@ -35,16 +35,16 @@ const navigateTo = (name: string) => {
         :key="item.name"
         type="button"
         @click="navigateTo(item.name)"
-        class="flex flex-col items-center justify-center flex-1 h-full transition-colors duration-200 rounded-2xl mx-1"
+        class="flex flex-col items-center justify-center flex-1 h-full rounded-2xl mx-1"
         :class="{
-          'text-primary-500 bg-primary-50': route.name === item.name,
-          'text-grey-500 hover:text-primary-400 hover:bg-grey-50': route.name !== item.name
+          'text-primary-600 nav-active': route.name === item.name,
+          'text-grey-500 nav-idle': route.name !== item.name
         }"
       >
-        <span class="mb-1 h-10 w-10e">
-          <img :src="item.icon" :alt="item.label" class="h-10 w-10 object-contain" />
+        <span class="nav-icon" :class="{ 'nav-icon--active': route.name === item.name }">
+          <img :src="item.icon" :alt="item.label" class="h-7 w-7 object-contain" />
         </span>
-        <span class="text-xs font-medium">{{ item.label }}</span>
+        <span class="text-[11px] font-medium">{{ item.label }}</span>
       </button>
     </div>
   </nav>
@@ -58,5 +58,37 @@ button {
 /* 支援 iOS 安全區域 */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav-idle {
+  transition: color 0.25s ease, background 0.25s ease;
+}
+
+.nav-active {
+  background: rgba(98, 163, 166, 0.12);
+}
+
+.nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 999px;
+  transition: transform 0.25s ease, background 0.25s ease;
+}
+
+.nav-icon--active {
+  background: rgba(98, 163, 166, 0.18);
+  box-shadow: 0 10px 20px rgba(98, 163, 166, 0.18);
+  transform: scale(1.05);
+}
+
+.nav-idle .nav-icon {
+  opacity: 0.75;
+}
+
+.nav-idle:active .nav-icon {
+  transform: scale(0.95);
 }
 </style>

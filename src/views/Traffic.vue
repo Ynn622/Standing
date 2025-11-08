@@ -7,7 +7,7 @@ import {
   getTrafficLayerPresets,
   getTrafficMapEmbedUrl,
   getTrafficTabs,
-  getMapEmbedUrlFromCoords
+  reverseGeocode
 } from '@/utils/api';
 import type { TrafficTab } from '@/utils/api';
 import type { LatLng, MapMarkerDescriptor } from '@/types/maps';
@@ -77,26 +77,9 @@ const handleLayerClick = (layerId: TrafficTab['id']) => {
   // TODO: 接上地圖 click 事件後可在此觸發
 };
 
-const goHome = () => {
-  router.push({ name: 'home' });
-};
+const currentAddress = ref('尚未鎖定地址');
 
-const openTrafficMap = () => {
-  const targetUrl = userCoords.value
-    ? `https://www.google.com/maps/search/?api=1&query=${userCoords.value.lat},${userCoords.value.lng}`
-    : mapEmbedUrl;
-  if (!targetUrl) {
-    return;
-  }
-  window.open(targetUrl, '_blank', 'noopener');
-};
-
-const locationLabel = computed(() => {
-  if (!userCoords.value) {
-    return '尚未鎖定座標';
-  }
-  return `緯度 ${userCoords.value.lat.toFixed(5)}、經度 ${userCoords.value.lng.toFixed(5)}`;
-});
+const locationLabel = computed(() => currentAddress.value);
 
 const requestUserLocation = () => {
   if (!canUseGeolocation || typeof navigator === 'undefined') {
@@ -106,11 +89,18 @@ const requestUserLocation = () => {
   isLocating.value = true;
   locationError.value = null;
   navigator.geolocation.getCurrentPosition(
-    (position) => {
+    async (position) => {
       const { latitude, longitude } = position.coords;
       const coords = { lat: latitude, lng: longitude };
       userCoords.value = coords;
       mapCenter.value = coords;
+      try {
+        const address = await reverseGeocode(latitude, longitude);
+        currentAddress.value = address || '無法取得地址名稱';
+      } catch (error) {
+        console.warn('reverse geocode failed', error);
+        currentAddress.value = '無法取得地址名稱';
+      }
       isLocating.value = false;
     },
     (error) => {
@@ -200,16 +190,6 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
             >
               {{ isLocating ? '定位中...' : '重新定位' }}
             </button>
-            <button type="button" class="map-action-btn" @click="goHome">
-              回首頁
-            </button>
-            <button
-              type="button"
-              class="map-action-btn map-action-btn--primary"
-              @click="openTrafficMap"
-            >
-              開啟 Google Maps
-            </button>
           </div>
 
           <!-- 浮動資訊卡 -->
@@ -257,9 +237,6 @@ const trafficMapMarkers = computed<MapMarkerDescriptor[]>(() => {
 
       <section class="rounded-2xl border border-dashed border-primary-100 bg-white/90 px-4 py-4 shadow-sm">
         <p class="text-xs font-semibold uppercase tracking-[0.3em] text-grey-500">定位資訊</p>
-        <p class="mt-1 text-sm text-grey-700">
-          授權後可將地圖自動聚焦於您的所在路段，便於判斷周遭交通狀況。
-        </p>
         <div class="mt-3 rounded-xl border border-grey-100 bg-white/80 px-3 py-2 text-xs text-grey-600">
           <p class="font-semibold text-grey-800">目前鎖定：{{ locationLabel }}</p>
           <p v-if="locationError" class="mt-1 text-rose-500">{{ locationError }}</p>

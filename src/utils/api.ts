@@ -1,4 +1,6 @@
 import { loadGoogleMaps } from '@/composables/useGoogleMapsLoader';
+// import { get } from 'http';
+import { useUserInfo } from './global';
 
 const {
   VITE_GOOGLE_MAPS_API_KEY,
@@ -310,6 +312,7 @@ export interface ObstacleIssueRecord {
   description: string;
   time: string;
   status: ObstacleIssueStatus;
+  reporterId: string;
 }
 
 export const submitObstacleReport = async (
@@ -319,6 +322,7 @@ export const submitObstacleReport = async (
   url.searchParams.set('address', payload.address);
   url.searchParams.set('obstacle_type', payload.obstacleType);
   url.searchParams.set('description', payload.description);
+  url.searchParams.set('modtified_userid', (useUserInfo().userId.value) ? useUserInfo().userId.value : 'visitor');
   try {
     const response = await fetch(url.toString(), {
       method: 'POST',
@@ -376,6 +380,7 @@ export const updateObstacleIssueStatus = async (
 ): Promise<SubmitObstacleResult> => {
   const url = new URL(OBSTACLE_ISSUE_STATUS_ENDPOINT);
   url.searchParams.set('issue_id', id);
+  url.searchParams.set('modtified_userid', (useUserInfo().userId.value) ? useUserInfo().userId.value : 'visitor_frontend');
   // url.searchParams.set('status', status);
   try {
     const response = await fetch(url.toString(), {
