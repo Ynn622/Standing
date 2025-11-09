@@ -3,6 +3,9 @@ import { loadGoogleMaps } from '@/composables/useGoogleMapsLoader';
 import type { LatLng } from '@/types/maps';
 import { useUserInfo } from './global';
 
+const raw = localStorage.getItem('app_user_info');
+const userInfo = raw ? JSON.parse(raw) : null;
+
 const {
   VITE_GOOGLE_MAPS_API_KEY,
   VITE_GOOGLE_MAPS_EMBED_HOME,
@@ -554,7 +557,7 @@ export const updateObstacleIssueStatus = async (
 ): Promise<SubmitObstacleResult> => {
   const url = new URL(OBSTACLE_ISSUE_STATUS_ENDPOINT);
   url.searchParams.set('issue_id', id);
-  url.searchParams.set('modtified_userid', (useUserInfo().userId.value) ? useUserInfo().userId.value : 'visitor_frontend');
+  url.searchParams.set('modtified_userid', (userInfo.id) ? userInfo.id : 'visitor');
   // url.searchParams.set('status', status);
   try {
     const response = await fetch(url.toString(), {

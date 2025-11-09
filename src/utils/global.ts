@@ -11,7 +11,6 @@ export function useUserInfo() {
   const messageHandler = (event: MessageEvent) => {
     try {
       const response = JSON.parse(event.data);
-      alert('收到來自 App 的用戶資訊回應');
       
       if (response.name === 'userinfo') {
         userInfo.value = response.data;
@@ -19,7 +18,6 @@ export function useUserInfo() {
         isLoading.value = false;
       }
     } catch (err) {
-      alert('解析用戶資訊失敗');
       console.error('解析用戶資訊失敗:', err);
       error.value = '解析用戶資訊失敗';
       isLoading.value = false;
@@ -47,7 +45,6 @@ export function useUserInfo() {
         data: null
       }));
     } else {
-      alert('flutterObject 不存在，可能不在 App 環境中');
       console.warn('flutterObject 不存在，可能不在 App 環境中');
       error.value = '不在 App 環境中';
     }

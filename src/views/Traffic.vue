@@ -12,7 +12,10 @@ import {
 import type { SafeRouteSegment, TrafficTab } from '@/utils/api';
 import type { LatLng, MapMarkerDescriptor, MapPolylineDescriptor } from '@/types/maps';
 
-const filters = getTrafficTabs();
+const filters = getTrafficTabs().sort((a, b) => {
+  const order: Record<TrafficTab['id'], number> = { safe: 0, avoid: 1, danger: 2 };
+  return (order[a.id] ?? 99) - (order[b.id] ?? 99);
+});
 const layerPresets = getTrafficLayerPresets();
 const defaultTrafficCenter: LatLng = { lat: 25.045193, lng: 121.541269 };
 const mapEmbedUrl = getTrafficMapEmbedUrl();
@@ -28,8 +31,8 @@ const selectedFilters = ref<TrafficTab['id'][]>(
 
 const detailLayerId = ref<TrafficTab['id'] | null>(null);
 const categoryLevelMap: Record<TrafficTab['id'], number[]> = {
-  safe: [1, 2],
-  avoid: [3, 4],
+  safe: [1, 2, 3],
+  avoid: [4],
   danger: [5]
 };
 
